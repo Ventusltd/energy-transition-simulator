@@ -5,7 +5,9 @@
 //   2. every substation compound sits EXACTLY on its GridAtlas point;
 //   3. the towers are blocks in SIM.blocks (the one wire layer) and the old 'pylons-real' custom layer is gone;
 //   4. place-frame round trip: each tower's local base point maps back to its lat/lon within 1 mm (consistency only);
-//   5. the labels on screen say "mapped positions", name GridAtlas and OpenStreetMap, and say what is estimated.
+//   5. no drawn tower falls inside a substation footprint (footprints read in Node, own point-in-polygon);
+//   6. estimated infill towers lie on the straight segment between two line vertices (a place with a long span);
+//   7. the labels on screen say "assumed at mapped line vertices", name GridAtlas and OpenStreetMap, and say what is estimated.
 // Screenshots go to $OUT (default test-output/grid-assets). Exit 1 on any FAIL.
 const http = require('http'), fs = require('fs'), path = require('path');
 const { chromium } = require('playwright');
@@ -33,6 +35,17 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
       for (const c of g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []) for (const p of c) V.add(kv + '|' + p[0] + '|' + p[1]); }
     await wait(1000);
   }
+  const FPS = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'substations-footprints.odbl.json'), 'utf8')).f.map(r => r[2]);
+  const inRing = (x, y, R) => { let c = false; for (let i = 0, j = R.length - 1; i < R.length; j = i++) { const [xi, yi] = R[i], [xj, yj] = R[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
+  const inSub = (lon, lat) => FPS.some(R => inRing(lon, lat, R));
+  // A place with a long 400 kV span (> 1.6 x the 360 m typical span), so the estimated path is drawn.
+  let LONG = null;
+  { const j = await (await fetch(`${GA}/grid_400kv.geojson`)).json(), kx = l => 111320 * Math.cos(l * Math.PI / 180);
+    outer: for (const f of j.features) { const g = f.geometry; if (!g) continue;
+      for (const c of g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []) for (let i = 1; i < c.length; i++) {
+        const a = c[i - 1], b = c[i], d = Math.hypot((b[0] - a[0]) * kx(a[1]), (b[1] - a[1]) * 111320);
+        if (d > 1.6 * 360 && d < 2000 && a[1] > 51.5 && a[1] < 53.5) { LONG = { lon: (a[0] + b[0]) / 2, lat: (a[1] + b[1]) / 2, d }; break outer; } } } }
   const S = (await (await fetch(`${GA}/grid_substations.geojson`)).json()).features.map(f => f.geometry.coordinates);
 
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -54,14 +67,16 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
       layer: !!SIM.map.getLayer('pylons-real'), wire: !!SIM.map.getLayer('wire'), worst, self: R.check(),
       btn: [...document.querySelectorAll('#bar button')].map(x => x.textContent), info: document.getElementById('info').textContent };
   });
+  const inside = P.towers.filter(t => inSub(t.lon, t.lat));
+  check('no tower inside a substation footprint (start)', inside.length === 0 && P.self.inSub.length === 0, `${inside.length} inside of ${P.towers.length}; module dropped ${P.self.dropped} so far`);
   const mapped = P.towers.filter(t => !t.est), miss = mapped.filter(t => !V.has(t.kv + '|' + t.lon + '|' + t.lat));
   check('towers drawn at the start (zoom 15)', P.towers.length > 0, `${P.towers.length} tower blocks, ${mapped.length} mapped, ${P.towers.length - mapped.length} estimated`);
   check('every mapped tower === a GridAtlas vertex (raw file, fetched in Node)', mapped.length > 0 && miss.length === 0, miss.length ? 'miss: ' + miss.slice(0, 5).map(t => t.id).join(' ') : `${mapped.length}/${mapped.length} exact`);
   check('module self-check agrees', P.self.bad.length === 0 && P.self.exact === mapped.length, JSON.stringify({ exact: P.self.exact, est: P.self.est, bad: P.self.bad.length }));
-  check('every tower carries provenance', P.towers.every(t => /^(mapped position|estimated)/.test(t.prov || '')), 'prov tag on each block');
+  check('every tower carries provenance', P.towers.every(t => /^(assumed: tower at a mapped line vertex|estimated)/.test(t.prov || '')), 'prov tag on each block');
   check('towers are blocks of the ONE wire layer', P.wire && !P.layer && P.live === P.towers.length, `wire layer ${P.wire}, own layer ${P.layer}, live ${P.live} = blocks ${P.towers.length}`);
   check('place-frame round trip < 1 mm (consistency, not truth)', P.worst < 0.001, `worst ${(P.worst * 1000).toFixed(4)} mm`);
-  check('pylon label: mapped positions, GridAtlas, OpenStreetMap, estimates', /mapped positions/.test(P.info) && /GridAtlas/.test(P.info) && /OpenStreetMap/.test(P.info) && /estimat/.test(P.info), P.info);
+  check('pylon label: assumed at mapped line vertices, GridAtlas, OpenStreetMap, estimates', /assumed at mapped line vertices/.test(P.info) && /GridAtlas/.test(P.info) && /OpenStreetMap/.test(P.info) && /estimat/.test(P.info), P.info);
   check('button "Pylons (mapped)"', P.btn.includes('Pylons (mapped)'), P.btn.join(' | '));
   await p.screenshot({ path: path.join(OUT, '1-map-towers.png') });
 
@@ -75,10 +90,23 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
   const miss2 = P2.filter(k => !V.has(k));
   check('after moving: every mapped tower still === a vertex', P2.length > 0 && miss2.length === 0, `${P2.length - miss2.length}/${P2.length} exact`);
 
+  // 6: estimated infill towers, at a long span.
+  if (LONG) {
+    await p.evaluate(t => SIM.map.jumpTo({ center: [t.lon, t.lat], zoom: 16, pitch: 65, bearing: 20 }), LONG);
+    await p.waitForTimeout(6000);
+    const E = await p.evaluate(() => window.__pylonsReal.check());
+    check('estimated towers drawn and each on a straight segment between two line vertices', E.est > 0 && E.estBad.length === 0 && E.bad.length === 0,
+      `span ${LONG.d.toFixed(0)} m; ${E.est} estimated, ${E.estBad.length} off-segment; ${E.exact} assumed-at-vertex`);
+    await p.screenshot({ path: path.join(OUT, '6-estimated-span.png') });
+  } else check('estimated towers drawn and each on a straight segment between two line vertices', false, 'no long span found');
+
   // 2 and 5: substations. Fly to the nearest 400 kV compound.
   const go = await p.evaluate(() => window.SUBS.go(400));
   await p.waitForTimeout(9000);
   const Q = await p.evaluate(() => ({ c: window.SUBS.check(), blocks: SIM.blocks.filter(b => b.substation !== undefined).map(b => ({ i: b.substation, lon: b.lon, lat: b.lat })), info: document.getElementById('info').textContent }));
+  const T4 = await p.evaluate(() => ({ t: SIM.blocks.filter(b => b.pylonsReal).map(b => [b.lon, b.lat]), c: window.__pylonsReal.check() }));
+  const in4 = T4.t.filter(q => inSub(q[0], q[1]));
+  check('no tower inside a substation footprint (at the 400 kV compound)', T4.t.length > 0 && in4.length === 0 && T4.c.inSub.length === 0, `${in4.length} inside of ${T4.t.length}; module dropped ${T4.c.dropped}`);
   const sbad = Q.blocks.filter(x => !(S[x.i] && S[x.i][0] === x.lon && S[x.i][1] === x.lat));
   check('substation compounds === GridAtlas points (raw file)', Q.blocks.length > 0 && sbad.length === 0, `${Q.blocks.length - sbad.length}/${Q.blocks.length} exact; footprint fences ${Q.c.footprint}, estimated ${Q.c.estimated}`);
   const cr = Q.c.credit; check('substation label: mapped positions, GridAtlas, OpenStreetMap, estimates', /mapped positions/.test(cr) && /GridAtlas/.test(cr) && /OpenStreetMap/.test(cr) && /estimate/.test(cr), cr);
