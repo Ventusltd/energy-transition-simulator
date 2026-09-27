@@ -82,12 +82,17 @@
   }
   const stripWidthM = (farm, doc) => (farm.sample_step_px ? farm.sample_step_px.value : 3) * doc.metres_per_pixel;
   const api = { LABEL, TILT_DEG, LOW_M, PAD_M, surveyGate, rowSource, rowsAllowed, bbox, distToBboxM, nearestRowM, checkFarm, tableLines, stripWidthM };
+  // Calibration fixture (scanner-rows.calib.json, owned here, read by procedural): one honest sentence from it.
+  api.calibText = c => !c || !c.row_pitch_m ? 'No row calibration.' :
+    `Row calibration: ${c.samples_accepted} of ${c.samples_solar} solar samples accepted (${c.samples_total} in all), ` +
+    `pitch median ${c.row_pitch_m.median} m` + (c.row_axis && c.row_axis.bearing_deg ? `, row axis ${c.row_axis.bearing_deg.median} deg from north` : '') + `, ${c.tag}.`;
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; return; }
 
   // ---- browser ----
   const BASE = (document.currentScript && document.currentScript.src.replace(/[^/]*$/, '')) || 'mod/';
   const state = { farms: null, docs: {}, checks: [], busy: false };
   const getJson = async u => { const r = await fetch(BASE + u); if (!r.ok) throw new Error(u + ' ' + r.status); return r.json(); };
+  async function loadCalib() { if (state.calib === undefined) { try { state.calib = await getJson('scanner-rows.calib.json'); } catch (e) { state.calib = null; } } return state.calib; }
   async function loadFarms() { if (!state.farms) state.farms = (await getJson('scanner-rows.farms.json')).farms; return state.farms; }
   async function check() {
     const farms = await loadFarms(); state.checks = [];
@@ -141,7 +146,7 @@
         (f0 ? `Rule R5-9: ${f0.gate.reason}, so the LiDAR here is ${f0.gate.ground} ground` +
           (f0.gate.lidarRows ? '. ' : ' (for piles and earthworks, never scanned for rows). ') : '') +
         out.filter(r => r.gate && !r.gate.allowed).map(r => `${r.register}: LiDAR rows refused (${r.gate.reason}). `).join('') +
-        'Mast and ring mark the register point.');
+        'Mast and ring mark the register point. ' + api.calibText(await loadCalib()));
       btn.textContent = `Scanner rows (${good.length}/${out.length})`;
     } catch (e) { btn.textContent = 'Scanner rows: failed'; console.error(e); }
     state.busy = false; return state.checks;
