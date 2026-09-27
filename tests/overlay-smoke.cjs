@@ -17,9 +17,12 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
   const base = `http://127.0.0.1:${server.address().port}/overlay.html`;
   const b = await chromium.launch({ channel: process.env.CI ? undefined : 'chrome', args: process.env.CI ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
   const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
-  const errs = []; p.on('pageerror', e => errs.push(e.message));
+  const errs = [], missing = []; p.on('pageerror', e => errs.push(e.message));
+  p.on('response', r => { if (r.status() === 404 && r.url().startsWith('http://127.0.0.1')) missing.push(r.url().replace(/^http:\/\/127\.0\.0\.1:\d+/, '')); });
   // 1. The map loads at a 400 kV line (GridAtlas coordinates) and the core buttons exist.
   await p.goto(`${base}?lat=52.2441634&lon=-1.0453368`, { waitUntil: 'load' }); await p.waitForTimeout(9000);
+  check('no missing local files (404)', missing.length === 0, missing.join(' | ') || 'none');
+  check('window.SIM exists (the app started)', await p.evaluate(() => !!window.SIM), 'window.SIM');
   const btns = await p.$$eval('#bar button', bs => bs.map(x => x.textContent.trim()));
   for (const need of ['Satellite', 'Dark', 'Wire', 'Walk', 'Drone', 'Map', 'Pylons']) check(`button ${need}`, btns.some(t => t.startsWith(need)), btns.join(' | '));
   check('map canvas', await p.$('canvas.maplibregl-canvas'), 'maplibre canvas present');
