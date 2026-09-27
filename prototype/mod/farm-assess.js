@@ -203,27 +203,51 @@
   var DTM = { by: 'Environment Agency', product: 'LIDAR Composite DTM 1 m', licence: 'Open Government Licence v3.0',
     attribution: 'Contains Environment Agency information © Environment Agency and database right.' };
   var SLOPE_NONE = 'slope not assessed (no DTM tile loaded)';
+  var SLOPE_BLOCK_M = 5;   // round 10: decided on the real fen tile (see farmer/r10.md); 1 = per 1 m cell
   // dtms: [{ geo:{data (rows north to south), width, height, west, north, res}, mask, src?, sha? }] from lidar-stream.
-  function slopeBands(dtms, b) {
-    var boxA = (b.e1 - b.e0) * (b.n1 - b.n0), cnt = [0, 0, 0], area = [0, 0, 0], res = null, used = [];
+  // Round 10: SCALE. opts.block (m, default SLOPE_BLOCK_M) averages the 1 m cells into blocks on the BNG lattice of that
+  // size: a block's height is the MEAN OF ITS MEASURED CELLS ONLY, and it is used only where at least 80% of its cells are
+  // measured. Slope is then central differences between the four neighbouring blocks. block <= res is the 1 cell path
+  // (each cell its own block, needs itself measured). opts.edges: also return the outline of the over-10 deg blocks as
+  // BNG segments [e1, n1, e2, n2] (one segment per side a steep block shares with a block that is not steep).
+  function slopeBands(dtms, b, opts) {
+    opts = opts || {};
+    var want = opts.block == null ? SLOPE_BLOCK_M : opts.block, EMAX = opts.maxEdges || 200000;
+    var boxA = (b.e1 - b.e0) * (b.n1 - b.n0), cnt = [0, 0, 0], area = [0, 0, 0], res = null, blk = null, used = [], edges = opts.edges ? [] : null, cut = false;
     (dtms || []).forEach(function (t) {
       var g = t && t.geo, m = t && t.mask; if (!g || !m || !g.data || !(g.res > 0)) return;
-      var w = g.width, h = g.height, r0 = g.res, cellA = r0 * r0, n = 0;
-      var c0 = Math.max(1, Math.ceil((b.e0 - g.west) / r0 - 0.5)), c1 = Math.min(w - 2, Math.floor((b.e1 - g.west) / r0 - 0.5 - 1e-9));
-      var q0 = Math.max(1, Math.ceil((g.north - b.n1) / r0 - 0.5)), q1 = Math.min(h - 2, Math.floor((g.north - b.n0) / r0 - 0.5 - 1e-9));
-      for (var r = q0; r <= q1; r++) for (var c = c0; c <= c1; c++) {
-        var k = r * w + c; if (!m[k] || !m[k - 1] || !m[k + 1] || !m[k - w] || !m[k + w]) continue;
-        var gx = (g.data[k + 1] - g.data[k - 1]) / (2 * r0), gy = (g.data[k - w] - g.data[k + w]) / (2 * r0);
-        var s = Math.atan(Math.sqrt(gx * gx + gy * gy)) / D, i = s < 5 ? 0 : s <= 10 ? 1 : 2;
-        cnt[i]++; area[i] += cellA; n++; }
-      if (n) { res = res == null ? r0 : res; used.push(t); } });
+      var w = g.width, h = g.height, r0 = g.res, k = Math.max(1, Math.round(want / r0)), B = k * r0, need = Math.ceil(0.8 * k * k - 1e-9), n = 0;
+      var bx0 = Math.floor((g.west + 0.5 * r0) / B), bx1 = Math.floor((g.west + (w - 0.5) * r0) / B);
+      var by0 = Math.floor((g.north - (h - 0.5) * r0) / B), by1 = Math.floor((g.north - 0.5 * r0) / B), W = bx1 - bx0 + 1, H = by1 - by0 + 1;
+      var sum = new Float64Array(W * H), num = new Uint16Array(W * H), z = new Float64Array(W * H), ok = new Uint8Array(W * H), st = new Uint8Array(W * H);
+      for (var r = 0; r < h; r++) { var by = Math.floor((g.north - (r + 0.5) * r0) / B) - by0, row = by * W;
+        for (var c = 0; c < w; c++) { var q = r * w + c; if (!m[q]) continue; var i0 = row + Math.floor((g.west + (c + 0.5) * r0) / B) - bx0; sum[i0] += g.data[q]; num[i0]++; } }
+      for (var i = 0; i < W * H; i++) if (num[i] >= need) { ok[i] = 1; z[i] = sum[i] / num[i]; }
+      // Blocks that overlap the box, each weighted by the part of it inside the box (a flat box sums to the box area).
+      var a0 = Math.max(1, Math.floor(b.e0 / B) - bx0), a1 = Math.min(W - 2, Math.ceil(b.e1 / B) - 1 - bx0);
+      var y0 = Math.max(1, Math.floor(b.n0 / B) - by0), y1 = Math.min(H - 2, Math.ceil(b.n1 / B) - 1 - by0);
+      var ov = function (lo, hi, a, z) { return Math.max(0, Math.min(hi, z) - Math.max(lo, a)); };
+      for (var y = y0; y <= y1; y++) for (var x = a0; x <= a1; x++) {
+        var j = y * W + x; if (!ok[j] || !ok[j - 1] || !ok[j + 1] || !ok[j - W] || !ok[j + W]) continue;
+        var gx = (z[j + 1] - z[j - 1]) / (2 * B), gy = (z[j + W] - z[j - W]) / (2 * B);
+        var s = Math.atan(Math.sqrt(gx * gx + gy * gy)) / D, bi = s < 5 ? 0 : s <= 10 ? 1 : 2;
+        var ea = ov((x + bx0) * B, (x + bx0 + 1) * B, b.e0, b.e1) * ov((y + by0) * B, (y + by0 + 1) * B, b.n0, b.n1);
+        if (!(ea > 0)) continue; cnt[bi]++; area[bi] += ea; n++; if (bi === 2) st[j] = 1; }
+      if (edges) for (var y2 = y0; y2 <= y1; y2++) for (var x2 = a0; x2 <= a1; x2++) {
+        var j2 = y2 * W + x2; if (!st[j2]) continue; var e0 = (x2 + bx0) * B, n0 = (y2 + by0) * B;
+        if (edges.length >= EMAX) { cut = true; break; }
+        if (!st[j2 - 1]) edges.push([e0, n0, e0, n0 + B]); if (!st[j2 + 1]) edges.push([e0 + B, n0, e0 + B, n0 + B]);
+        if (!st[j2 - W]) edges.push([e0, n0, e0 + B, n0]); if (!st[j2 + W]) edges.push([e0, n0 + B, e0 + B, n0 + B]); }
+      if (n) { res = res == null ? r0 : res; blk = blk == null ? B : blk; used.push(t); } });
     var tot = area[0] + area[1] + area[2]; if (!tot) return null;
-    return { boxHa: boxA / 1e4, assessedHa: tot / 1e4, cover: tot / boxA, res: res, tiles: used.length,
+    return { boxHa: boxA / 1e4, assessedHa: tot / 1e4, cover: tot / boxA, res: res, block: blk, tiles: used.length,
       sha: used.map(function (t) { return t.sha ? String(t.sha).slice(0, 12) : ''; }).filter(Boolean),
-      product: (used[0].src && used[0].src.product) || DTM.product,
+      product: (used[0].src && used[0].src.product) || DTM.product, edges: edges, edgesCut: cut,
       bands: [['under 5°', area[0]], ['5-10°', area[1]], ['over 10°', area[2]]].map(function (x) { return { band: x[0], ha: x[1] / 1e4, share: x[1] / tot }; }) };
   }
-  function slopeTag(sl) { return '[derived from ' + DTM.by + ' ' + sl.product.replace(/( DTM)? [0-9.]+ ?m$/, '') + ' DTM ' + sl.res + ' m, OGL v3.0]'; }
+  // The scale, said once: "5 m blocks from DTM 1 m", or "DTM 1 m" when each cell is its own block.
+  function slopeScale(sl) { return sl.block > sl.res ? sl.block + ' m blocks from DTM ' + sl.res + ' m' : 'DTM ' + sl.res + ' m'; }
+  function slopeTag(sl) { return '[derived, ' + slopeScale(sl) + ': ' + DTM.by + ' ' + sl.product.replace(/( DTM)? [0-9.]+ ?m$/, '') + ', OGL v3.0]'; }
   // The SLOPE line, one place. No tile: says so and shows no value.
   function slopeText(sl, phone) {
     if (!sl) return 'SLOPE: ' + SLOPE_NONE + '.';
@@ -231,7 +255,8 @@
     var cov = sl.assessedHa.toFixed(0) + ' of ' + sl.boxHa.toFixed(0) + ' ha';
     if (phone) return 'SLOPE: <5° ' + f(sl.bands[0]) + ', 5-10° ' + f(sl.bands[1]) + ', >10° ' + f(sl.bands[2]) + ' ' + slopeTag(sl) + '; over ' + cov + ' of box.';
     return 'SLOPE (share of the ' + cov + ' of the box covered by the streamed DTM): under 5° ' + f(sl.bands[0]) + '; 5 to 10° ' + f(sl.bands[1]) + '; over 10° ' + f(sl.bands[2]) + ' '
-      + slopeTag(sl) + '. Bare-earth ground, 1 cell central differences; survey year not read.';
+      + slopeTag(sl) + '. Bare-earth ground, ' + (sl.block > sl.res ? slopeScale(sl) + ' (mean of measured cells, blocks at least 80% measured), central differences between blocks, so ditch and drain banks narrower than a block do not count as steep'
+      : '1 cell central differences') + '; over-10° ' + (sl.block > sl.res ? 'blocks' : 'cells') + ' outlined on the map; survey year not read.';
   }
   function slopeCredit(sl) { return sl ? 'Slope source: ' + DTM.by + ', ' + sl.product + (sl.sha.length ? ' (receipt ' + sl.sha.join(', ') + ')' : '') + '. ' + DTM.licence + '. ' + DTM.attribution : ''; }
   var INFO_KEYS = ['whiteSpace', 'bottom', 'maxHeight', 'overflowY', 'maxWidth', 'boxSizing', 'zIndex', 'background'], FARM_HEAD = 'LAND: site box';
@@ -240,7 +265,7 @@
   function restoreInfo(prev, el) { INFO_KEYS.forEach(function (k) { el.style[k] = prev.style[k]; }); if (!prev.lift) el.classList.remove('fa-lift'); }
   // Called on each #info mutation while the farmer result is lifted. Returns true when it restored (the watch is then over).
   function infoChanged(prev, el) { if (!prev || isFarmText(el.textContent)) return false; restoreInfo(prev, el); return true; }
-  var core = { DTM: DTM, SLOPE_NONE: SLOPE_NONE, slopeBands: slopeBands, slopeText: slopeText, slopeCredit: slopeCredit, gridRef: gridRef, landHead: landHead, INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
+  var core = { DTM: DTM, SLOPE_NONE: SLOPE_NONE, slopeBands: slopeBands, slopeText: slopeText, slopeScale: slopeScale, SLOPE_BLOCK_M: SLOPE_BLOCK_M, slopeCredit: slopeCredit, gridRef: gridRef, landHead: landHead, INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
@@ -327,6 +352,22 @@
     });
     SIM.addBlock({ lon: an.lon, lat: an.lat, anchor: an, lines: L, buf: P.wireBuffer(an, L), farmAssess: true });
   }
+  // Round 10: the over-10 deg blocks as ONE outline wire layer (farmAssess, kind slope-over-10), so slope is geometry.
+  // BNG -> local wire by an affine frame exact at three box corners (OSTN15 varies by mm over 2 km), draped on the map
+  // terrain like the other farmer outlines, 2.5 m up. Drawn only from the streamed DTM; nothing when there is no tile.
+  function drawSlope(b, sl) {
+    SIM.removeWhere(function (x) { return x.farmAssess && x.kind === 'slope-over-10'; });
+    if (!sl || !sl.edges || !sl.edges.length) return;
+    var P = PF(), c = P.fromBng((b.e0 + b.e1) / 2, (b.n0 + b.n1) / 2), an = P.placeKey(c.lat, c.lon), m = SIM.map, S = b.e1 - b.e0, T = b.n1 - b.n0;
+    var pt = function (e, n) { var g = P.fromBng(e, n), q = P.toLocal(an, g.lat, g.lon, 0); return [q.x, q.y, g.lon, g.lat]; };
+    var o = pt(b.e0, b.n0), ex = pt(b.e1, b.n0), ny = pt(b.e0, b.n1);
+    var at = function (e, n) { var u = (e - b.e0) / S, v = (n - b.n0) / T; return [0, 1, 2, 3].map(function (i) { return o[i] + (ex[i] - o[i]) * u + (ny[i] - o[i]) * v; }); };
+    var qe = function (lon, lat) { var v = m.queryTerrainElevation ? m.queryTerrainElevation([lon, lat]) : null; return v == null ? null : v; }, z0 = qe(an.lon, an.lat) || 0;
+    var L = sl.edges.map(function (s) { var p = at(s[0], s[1]), q = at(s[2], s[3]), zp = qe(p[2], p[3]), zq = qe(q[2], q[3]);
+      return [p[0], p[1], (zp == null ? 0 : zp - z0) + 2.5, q[0], q[1], (zq == null ? 0 : zq - z0) + 2.5]; });
+    SIM.addBlock({ lon: an.lon, lat: an.lat, anchor: an, lines: L, buf: P.wireBuffer(an, L), farmAssess: true, kind: 'slope-over-10', prov: 'derived', receipt: sl.sha.join(',') });
+    SIM.repaint && SIM.repaint();
+  }
   // Tiles the stream module already holds for this box, by its fixed e0_n0 lattice key. Never fetches.
   function streamedDtms(b) {
     var LS = root.__lidarStream, out = []; if (!LS || !LS.tiles || typeof LS.tiles.get !== 'function') return out;
@@ -335,7 +376,7 @@
     return out;
   }
   function report(b, rec, res, sub, c, fz, fzErr) {
-    var sl = slopeBands(streamedDtms(b), b);
+    var sl = slopeBands(streamedDtms(b), b, { edges: true }); drawSlope(b, sl);
     var pct = function (x) { return (100 * x).toFixed(1) + '%'; };
     var lines = [landHead(b) + ' (2,048 m, centred on arrival, edges on 256 m BNG grid, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
     res.rows.forEach(function (r) { lines.push('  ' + r.grade + ': ' + pct(r.share) + ' (' + r.ha.toFixed(0) + ' ha) [derived]'); });
@@ -351,7 +392,7 @@
     root.__farmAssess = { box: b, centreBng: { e: cb.e, n: cb.n }, edgeMarginM: edgeMargin(b, cb.e, cb.n), rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at,
       flood: fz ? { fz3: { ha: fz.fz3.ha, share: fz.fz3.share }, fz2: { ha: fz.fz2.ha, share: fz.fz2.share }, exceeded: fz.exceeded, fetchedAt: fz.at, ms: fz.ms } : null,
       floodError: fz ? null : (fzErr || 'no answer'), floodLine: floodText(fz, innerWidth < 600, fzErr),
-      slope: sl ? { bands: sl.bands, assessedHa: sl.assessedHa, cover: sl.cover, res: sl.res, tiles: sl.tiles, sha: sl.sha } : null, slopeLine: slopeText(sl, innerWidth < 600) };
+      slope: sl ? { bands: sl.bands, assessedHa: sl.assessedHa, cover: sl.cover, res: sl.res, block: sl.block, tiles: sl.tiles, sha: sl.sha, outlineSegs: sl.edges.length, outlineCut: sl.edgesCut } : null, slopeLine: slopeText(sl, innerWidth < 600) };
     if (innerWidth < 600) lines = [lines[0].replace(' [derived, box centre, OS grid ref]', ' [derived]').replace(' (2,048 m, centred on arrival, edges on 256 m BNG grid, ', ' (centred on arrival, ').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
         [grade3Text(res, true), slopeText(sl, true), floodText(fz, true, fzErr), gridText(sub, true),

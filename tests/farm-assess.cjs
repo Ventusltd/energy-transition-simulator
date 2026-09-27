@@ -190,30 +190,55 @@ T('(slope9) synthetic plane of 7.0 deg rising to the NE gives 100% in the 5-10 d
     const t = dtmTile(519000, 332000, 4096, 4, (e, n) => 10 + g * (e - 519000) + g * (n - 332000));
     const sl = A.slopeBands([t], bx9); return sl.bands.map(x => x.share); });
   return [near(out[0][1], 1, 1e-12) && near(out[1][0], 1, 1e-12) && near(out[2][2], 1, 1e-12), JSON.stringify(out)]; });
-T('(slope9) a flat tile gives 100% under 5 deg over the whole 419 ha box, tagged [derived from Environment Agency LIDAR Composite DTM 1 m, OGL v3.0], licence and attribution named', () => {
+T('(slope9/r10) a flat tile gives 100% under 5 deg over the whole 419 ha box, tagged [derived, 5 m blocks from DTM 1 m: Environment Agency LIDAR Composite, OGL v3.0], licence and attribution named', () => {
   const sl = A.slopeBands([dtmTile(519000, 332000, 4096, 1, () => 4.2)], bx9), d = A.slopeText(sl, false), ph = A.slopeText(sl, true), cr = A.slopeCredit(sl);
   return [near(sl.bands[0].share, 1, 1e-12) && near(sl.assessedHa, 419.4304, 1e-6) && sl.bands[1].ha === 0 && sl.bands[2].ha === 0
-    && /under 5° 100\.0% \(419 ha\)/.test(d) && d.indexOf('[derived from Environment Agency LIDAR Composite DTM 1 m, OGL v3.0]') > 0 && /^SLOPE: <5° 100\.0%/.test(ph)
+    && /under 5° 100\.0% \(419 ha\)/.test(d) && d.indexOf('[derived, 5 m blocks from DTM 1 m: Environment Agency LIDAR Composite, OGL v3.0]') > 0 && d.indexOf('5 m blocks from DTM 1 m (mean of measured cells, blocks at least 80% measured)') > 0 && ph.indexOf('5 m blocks from DTM 1 m') > 0 && /^SLOPE: <5° 100\.0%/.test(ph)
     && /Open Government Licence v3\.0\. Contains Environment Agency information © Environment Agency and database right\./.test(cr) && /receipt abcdef012345/.test(cr), d + ' || ' + ph + ' || ' + cr]; });
 T('(slope9) a missing tile gives "slope not assessed (no DTM tile loaded)" and no value, on desktop and phone', () => {
   const a = A.slopeBands([], bx9), c = A.slopeBands(undefined, bx9), d = A.slopeBands([{ none: 'outside the service envelope' }], bx9);
   const t = A.slopeText(a, false), tp = A.slopeText(null, true);
   return [a === null && c === null && d === null && t === 'SLOPE: slope not assessed (no DTM tile loaded).' && tp === t && A.slopeCredit(null) === '' && !/\d/.test(t), t]; });
-T('(slope9) bands split by area: W part flat, middle 8 deg, E part 15 deg; only cells in the box count; shares are of the assessed part', () => {
+T('(slope9, 1 m path) bands split by area: W part flat, middle 8 deg, E part 15 deg; only cells in the box count; shares are of the assessed part', () => {
   // Tile E 520960-523008, N 333824-335872 overlaps the box in E 520960-521984, N 333824-334848. Its W column and S row are
   // tile edges (no west/south neighbour), so 1023 x 1023 cells are assessable. The kinks at x1, x2 move at most one column.
   const s8 = tan(8), s15 = tan(15), x1 = 521300, x2 = 521700;
   const z = e => e < x1 ? 0 : e < x2 ? (e - x1) * s8 : (x2 - x1) * s8 + (e - x2) * s15;
-  const sl = A.slopeBands([dtmTile(520960, 333824, 2048, 1, e => z(e))], bx9), H = sl.bands.map(x => x.ha * 1e4);
+  const sl = A.slopeBands([dtmTile(520960, 333824, 2048, 1, e => z(e))], bx9, { block: 1 }), H = sl.bands.map(x => x.ha * 1e4);
   const rows = 1023, flat = (x1 - 520961) * rows, mid = (x2 - x1) * rows, steep = (521984 - x2) * rows;
   return [near(sl.assessedHa, 1023 * 1023 / 1e4, 1e-9) && Math.abs(H[0] - flat) <= rows && Math.abs(H[1] - mid) <= rows && Math.abs(H[2] - steep) <= rows
     && near(sl.bands.reduce((s, x) => s + x.share, 0), 1, 1e-12) && near(sl.cover, 1023 * 1023 / (2048 * 2048), 1e-12), JSON.stringify(H) + ' vs ' + [flat, mid, steep]]; });
-T('(slope9) holes: unmeasured cells and their 4 neighbours are not assessed (never 0 m)', () => {
+T('(slope9, 1 m path) holes: unmeasured cells and their 4 neighbours are not assessed (never 0 m)', () => {
   const t = dtmTile(519000, 332000, 4096, 1, () => 0, (e, n) => e > 521000 && e < 521100 && n > 333000 && n < 333100);
-  const sl = A.slopeBands([t], bx9);
+  const sl = A.slopeBands([t], bx9, { block: 1 });
   return [near(sl.assessedHa * 1e4, 2048 * 2048 - 100 * 100 - 4 * 100, 1e-6) && sl.bands[0].share === 1, sl.assessedHa]; });
 T('(gref9) gridRef digits=0 gives null (was 8 figures via digits||8); omitted still gives 8; 6 gives 6', () => {
   const z = A.gridRef(520960, 333824, 0), u = A.gridRef(520960, 333824), n6 = A.gridRef(520960, 333824, 6);
   return [z === null && u === 'TF 2096 3382' && n6 === 'TF 209 338', [z, u, n6].join(' | ')]; });
+
+// 15. Round 10: SCALE. 5 m blocks (mean of measured 1 m cells, blocks at least 80% measured) so ditch banks are not "steep".
+T('(slope10) a narrow 2 m ditch, 1.5 m deep with vertical banks, cut into flat ground: over 10 deg at 1 m, but 100% under 5 deg at 5 m blocks', () => {
+  const ditch = (e, n) => (e >= 521001 && e < 521003) || (n >= 333401 && n < 333403) ? -1.5 : 0;   // one N-S and one E-W ditch
+  const t = dtmTile(519000, 332000, 4096, 1, ditch), s1 = A.slopeBands([t], bx9, { block: 1 }), s5 = A.slopeBands([t], bx9);
+  return [s1.bands[2].ha > 0.8 && s5.block === 5 && s5.bands[0].share === 1 && s5.bands[2].ha === 0 && s5.bands[1].ha === 0,
+    '1 m over 10: ' + s1.bands[2].ha.toFixed(3) + ' ha; 5 m: ' + s5.bands.map(x => x.share).join(',')]; });
+T('(slope10) 5 m blocks keep a real 7 deg field in the 5-10 band and a 14 deg bank over 10 (averaging does not flatten true slope)', () => {
+  const out = [7, 14].map(deg => { const g = tan(deg); return A.slopeBands([dtmTile(519000, 332000, 4096, 1, (e, n) => g * (n - 332000))], bx9).bands.map(x => x.share); });
+  return [near(out[0][1], 1, 1e-9) && near(out[1][2], 1, 1e-9), JSON.stringify(out)]; });
+T('(slope10) the 80% rule: blocks with 5 of 25 cells unmeasured are used (their junk heights ignored); 6 of 25 are not, nor their 4 neighbours', () => {
+  const inR = (e, n) => e > 521000 && e < 521100 && n > 333000 && n < 333100, k5 = [0, 1, 2, 3, 4], k6 = [0, 1, 2, 3, 4, 5];
+  const mk = K => { const t = dtmTile(519000, 332000, 4096, 1, () => 0, (e, n) => inR(e, n) && K.includes((Math.floor(e) % 5) * 5 + (Math.floor(n) % 5)));
+    for (let i = 0; i < t.mask.length; i++) if (!t.mask[i]) t.geo.data[i] = 1000; return A.slopeBands([t], bx9); };
+  const a = mk(k5), b6 = mk(k6), box = 2048 * 2048;
+  return [near(a.assessedHa * 1e4, box, 1e-6) && a.bands[0].share === 1 && near(b6.assessedHa * 1e4, box - (400 + 80) * 25, 1e-6) && b6.bands[0].share === 1,
+    a.assessedHa + ' / ' + b6.assessedHa]; });
+T('(slope10) the over-10 deg outline: none on flat ground; on a 14 deg plane every segment is one 5 m block side on the 5 m BNG lattice', () => {
+  const f0 = A.slopeBands([dtmTile(519000, 332000, 4096, 1, () => 0)], bx9, { edges: true });
+  const s = A.slopeBands([dtmTile(519000, 332000, 4096, 1, (e, n) => tan(14) * (n - 332000))], bx9, { edges: true });
+  const okSeg = s.edges.every(q => q.every(v => v % 5 === 0) && Math.hypot(q[2] - q[0], q[3] - q[1]) === 5);
+  return [f0.edges.length === 0 && s.edges.length > 0 && okSeg && !s.edgesCut, f0.edges.length + ' / ' + s.edges.length]; });
+T('(slope10) the scale is said: 5 m blocks from DTM 1 m by default; block 1 on a 1 m tile says DTM 1 m and 1 cell central differences', () => {
+  const t = dtmTile(519000, 332000, 4096, 1, () => 0), a = A.slopeBands([t], bx9), c = A.slopeBands([t], bx9, { block: 1 });
+  return [A.SLOPE_BLOCK_M === 5 && A.slopeScale(a) === '5 m blocks from DTM 1 m' && A.slopeScale(c) === 'DTM 1 m' && /1 cell central differences/.test(A.slopeText(c, false)), A.slopeScale(a) + ' | ' + A.slopeScale(c)]; });
 
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
