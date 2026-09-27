@@ -1,7 +1,8 @@
 // coords-readout: an always-visible coordinate HUD in the morning engine's style (small monospace, grey on black,
 // red for the rule line). It reads the map centre (where Walk and Drone stand) and shows:
 //   BNG   the 10-figure National Grid reference, from the world's own bng.mjs, corrected by OSTN15 where the
-//         block is loaded (about 0.1 m), else the Helmert answer, flagged as an estimate (about 3.5 m);
+//         block is loaded (about 0.1 m), else the Helmert answer, flagged as an estimate (up to about 5 m: measured worst 4.74 m at 20 OS test points);
+//         the Grid line at the foot names the conversion actually used for the numbers above it;
 //   WGS84 latitude and longitude;
 //   ASL   height above sea level of the ground under the centre, read from the open terrain tiles (Terrarium,
 //         heights to mean sea level, a 30 m class model: an estimate, labelled so);
@@ -88,6 +89,7 @@
     function render() {
       const c = map.getCenter(), lat = c.lat, lon = c.lng;
       const rows = [];
+      let grid = 'Grid: OS National Grid, not converted here'; // outside GB, or the converter has not loaded
       // BNG
       if (!inGB(lat, lon)) rows.push(`<span class="k">BNG  </span>outside GB: no National Grid`);
       else if (!BNG) rows.push(`<span class="k">BNG  </span>loading converter…`);
@@ -98,7 +100,8 @@
         let ref = '—';
         try { ref = BNG.gridRef(t.e, t.n, 10); } catch (e) { /* off grid */ }
         rows.push(`<span class="k">BNG  </span><b>${esc(ref)}</b>  <span class="s">E ${t.e.toFixed(1)}  N ${t.n.toFixed(1)}</span>`);
-        rows.push(`<span class="s">     ${t.ostn15 ? 'OSTN15 (OS definitive, ~0.1 m)' : 'Helmert estimate (~3.5 m), OSTN15 not loaded'}</span>`);
+        rows.push(`<span class="s">     ${t.ostn15 ? 'OSTN15 (OS definitive, ~0.1 m)' : 'Helmert estimate, up to about 5 m (measured worst 4.74 m at 20 OS test points), OSTN15 not loaded'}</span>`);
+        grid = t.ostn15 ? 'Grid: OS National Grid, OSTN15' : 'Grid: OS National Grid, Helmert (OSTN15 not loaded)';
       }
       // WGS84
       const ns = lat >= 0 ? 'N' : 'S', ew = lon >= 0 ? 'E' : 'W';
@@ -114,7 +117,7 @@
       const sv = surveyOn();
       const gl = sv ? (lidarCached(lat, lon) ? 'LiDAR 1 m (cached)' : 'Survey grid 10 m · LiDAR 1 m not cached here') : 'Ground: satellite + open terrain';
       rows.push(`<span class="r">${esc(gl)}</span>`);
-      rows.push(`<span class="s">Grid: OS National Grid, OSTN15</span>`, `<span class="s">Terrain: AWS Terrain Tiles (open)</span>`);
+      rows.push(`<span class="s">${esc(grid)}</span>`, `<span class="s">Terrain: AWS Terrain Tiles (open)</span>`);
       hud.innerHTML = rows.join('\n');
     }
 
