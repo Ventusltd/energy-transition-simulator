@@ -46,4 +46,26 @@ ok('licence OGL v3 and attribution present', /Open Government Licence v3\.0/.tes
 const cc = A.centroid([[0, 0], [0, 10], [10, 10], [10, 0], [9, 0], [8, 0], [7, 0]]);
 ok('label at area centroid, not vertex average', near(cc[0], 5, 1e-9) && near(cc[1], 5, 1e-9), cc);
 
+// 6. Honest GRID line (round 2): source, licence and provenance words on screen; voltage reported; never an offer.
+const sub = { m: 3130, kv: [33], op: 'UK Power Networks' };
+const gd = A.gridText(sub, false), gp = A.gridText(sub, true);
+ok('grid line names OSM source and ODbL', gd.includes('GridAtlas substations from OpenStreetMap (© OpenStreetMap contributors, ODbL)'), gd.slice(-90));
+ok('voltage marked [reported, as tagged]', gd.includes('33 kV [reported, as tagged]'), gd.slice(0, 120));
+ok('distance marked [derived, straight line from map centre]', gd.includes('3.13 km [derived, straight line from map centre]'), gd.slice(0, 80));
+ok('warning: private/generator, not a connection point, capacity not assessed', gd.includes('may be a private or generator substation; not a connection point or offer; capacity not assessed'), '');
+ok('network operator shown', gd.includes('operator UK Power Networks [reported, as tagged]'), '');
+ok('phone line keeps meaning: derived, reported, not an offer, ODbL', /\[derived\]/.test(gp) && /\[reported\]/.test(gp) && /not a connection offer/.test(gp) && /capacity not assessed/.test(gp) && /ODbL/.test(gp) && gp.length < 170, gp.length + ' chars');
+const nv = A.gridText({ m: 900, kv: [] }, false), nvp = A.gridText({ m: 900, kv: [] }, true);
+ok('no voltage tag -> "voltage not tagged", no kV claimed', nv.includes('voltage not tagged') && nvp.includes('voltage not tagged') && !/kV/.test(nv + nvp), nv.slice(0, 100));
+ok('no substations loaded -> says so, no distance', !/km/.test(A.gridText(null, false)) && /not loaded/.test(A.gridText(null, true)), A.gridText(null, false));
+ok('operator kept only for network operators', ['UK Power Networks', 'NIE Networks', 'SSEN Transmission', 'Northern Powergrid', 'NPG'].every(o => A.netOperator(o) === o)
+  && ['Network Rail', 'RWE Renewables', 'Scottish Power Renewables', 'Humber Gateway OFTO', 'Michelin Tyre PLC', 'Lightsource Renewable Energy', 'Some Farm', ''].every(o => A.netOperator(o) === ''), '');
+ok('no operator -> says so, never an OSM name', A.gridText({ m: 900, kv: [33], op: '', name: 'Hill Farm' }, false).includes('no network operator recognised in its tags') && !/Hill Farm/.test(A.gridText({ m: 900, kv: [33], name: 'Hill Farm' }, false)), '');
+
+// 7. Grade 3 wording: none present -> "Grade 3: 0%", never "may include BMV 3a".
+const g0 = A.grade3Text({ grade3Share: 0, bmv12Share: 1 }, false), g0p = A.grade3Text({ grade3Share: 0, bmv12Share: 1 }, true);
+ok('no grade 3 -> "Grade 3: 0%", no "may include"', g0.includes('Grade 3: 0%') && g0p.includes('Grade 3: 0%') && !/may include|not split/.test(g0 + g0p), g0);
+const g3 = A.grade3Text({ grade3Share: 0.25, bmv12Share: 0.5 }, false);
+ok('grade 3 present -> 3a/3b caveat kept', g3.includes('25.0% may include BMV 3a') && /Field survey needed/.test(g3), g3);
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

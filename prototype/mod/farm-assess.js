@@ -5,6 +5,9 @@
 //  - Grade polygons are clipped to the box and drawn as wire outlines, anchored on the map, labelled with grade,
 //    source, licence and date. The share of the box by grade is DERIVED (clipped planar area in National Grid metres).
 //  - Distance to the nearest GridAtlas substation is DERIVED (great-circle, WGS84 mean radius) from GridAtlas points.
+//    GridAtlas substations are OpenStreetMap features (ODbL): the voltage is REPORTED as tagged, the point may be a
+//    private or generator substation, and it is never a connection point, an offer or a capacity. An operator is shown
+//    only when it looks like a network operator (DNO/TNO pattern); OSM "name" is never shown (it can name a farm).
 // Honest limits, shown on screen: the provisional ALC is a 1:250,000 map digitised from 1970s one-inch maps; it does
 // NOT split grade 3 into 3a (best and most versatile) and 3b, so BMV here is "grades 1 and 2, plus an unknown part of 3".
 // It is not a field survey. Licence (confirmed on the source item page, 27 Sept 2026): Open Government Licence v3.0.
@@ -21,6 +24,13 @@
     date: 'service data last edited 2024-11-26; map scale 1:250,000 (digitised from 1970s one-inch maps)'
   };
   var GA = 'https://ventusltd.github.io/gridatlas/atlas/releases/202608300453-atlas-v9/data/grid_substations.geojson';
+  var GA_SRC = 'GridAtlas substations from OpenStreetMap (© OpenStreetMap contributors, ODbL)';
+  var GRID_WARN = 'may be a private or generator substation; not a connection point or offer; capacity not assessed';
+  var GRID_WARN_PHONE = 'may be private/generator; not a connection offer; capacity not assessed';
+  // Network operators only (distribution and transmission licensees and their old names). Anything else, such as a
+  // generator, a railway or a factory, is not shown by name.
+  var NET_OP = /(power ?networks?|power ?gri[dn]|national grid|electricity (distribution|transmission|networks)|electricity north ?west|nie networks|sp (energy networks|transmission|distribution)|scottish power( distribution)?$|scottish (and|&) southern (electricity networks|energy power distribution)|\bssen\b|sse (power distribution|networks)|scottish hydro electric transmission|western (power|distribution)|southern electric power distribution|central networks|esp electricity|^(ukpn|npg|nget|enwl?|yedl|nedl|sepd|manweb)$)/i;
+  var NOT_NET = /renewable|wind|solar|farm|ofto|natural power/i;
   var TILE = 2048, R = 6371008.8, D = Math.PI / 180, MIN_GAP_MS = 1100;
 
   // ---------------- pure core (no DOM, no network; tested by tests/farm-assess.cjs) ----------------
@@ -64,15 +74,32 @@
     var h = Math.sin(dl / 2) * Math.sin(dl / 2) + Math.cos(lat1 * D) * Math.cos(lat2 * D) * Math.sin(dn / 2) * Math.sin(dn / 2);
     return 2 * R * Math.asin(Math.min(1, Math.sqrt(h))); }
   function nearest(points, lat, lon) { var best = null;
-    points.forEach(function (p) { var d = haversine(lat, lon, p.lat, p.lon); if (!best || d < best.m) best = { m: d, lat: p.lat, lon: p.lon, kv: p.kv }; });
+    points.forEach(function (p) { var d = haversine(lat, lon, p.lat, p.lon); if (!best || d < best.m) best = { m: d, lat: p.lat, lon: p.lon, kv: p.kv, op: p.op }; });
     return best; }
   function kvList(v) { return String(v || '').split(/[;:,]/).map(function (s) { return Math.round(Number(s) / 1000); })
     .filter(function (k) { return k >= 1; }).sort(function (a, b) { return b - a; }); }
+  function netOperator(op) { op = String(op || '').trim(); return op && NET_OP.test(op) && !NOT_NET.test(op) ? op.slice(0, 60) : ''; }
+  // The GRID line, one place, so the tests read the exact text the screen shows.
+  function gridText(sub, phone) {
+    if (!sub) return phone ? 'GRID: substations not loaded.' : 'GRID: ' + GA_SRC + ': not loaded. Capacity: not assessed.';
+    var op = netOperator(sub.op), km = (sub.m / 1000).toFixed(2) + ' km';
+    var tagged = !!(sub.kv && sub.kv.length), kv = tagged ? sub.kv.join('/') + ' kV' : 'voltage not tagged';
+    if (phone) return 'GRID: OSM substation ' + km + ' [derived], ' + kv + (tagged ? ' [reported]' : '') + (op ? ', ' + op : '') + '; ' + GRID_WARN_PHONE + '. © OSM, ODbL';
+    return 'GRID: nearest substation ' + km + ' [derived, straight line from map centre], ' + kv + (tagged ? ' [reported, as tagged]' : '')
+      + (op ? ', operator ' + op + ' [reported, as tagged]' : ', no network operator recognised in its tags') + '. '
+      + 'Caution: ' + GRID_WARN + '. Source: ' + GA_SRC + '.';
+  }
+  function grade3Text(res, phone) {
+    var p = (100 * res.grade3Share).toFixed(1) + '%';
+    if (!(res.grade3Share > 0)) return phone ? '  Grade 3: 0%.' : '  Grades 1+2 (best and most versatile): ' + (100 * res.bmv12Share).toFixed(1) + '%. Grade 3: 0%.';
+    return phone ? '  Grade 3 not split 3a/3b; may include BMV 3a; field survey needed.'
+      : '  Grades 1+2 (best and most versatile): ' + (100 * res.bmv12Share).toFixed(1) + '%. Grade 3 not split into 3a/3b here: ' + p + ' may include BMV 3a. Field survey needed.';
+  }
   function queryUrl(b) {
     return SRC.url + '?where=1%3D1&geometry=' + [b.e0, b.n0, b.e1, b.n1].join('%2C') + '&geometryType=esriGeometryEnvelope&inSR=27700'
       + '&spatialRel=esriSpatialRelIntersects&outFields=ALC_GRADE&returnGeometry=true&outSR=27700&maxAllowableOffset=5&geometryPrecision=1&f=json';
   }
-  var core = { SRC: SRC, TILE: TILE, tileBox: tileBox, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, kvList: kvList, queryUrl: queryUrl };
+  var core = { SRC: SRC, TILE: TILE, tileBox: tileBox, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
@@ -82,7 +109,7 @@
   function wait(fn) { if (root.SIM && PF()) fn(); else setTimeout(function () { wait(fn); }, 300); }
   function loadSubs() { if (subs) return subs;
     subs = fetch(GA).then(function (r) { return r.json(); }).then(function (j) {
-      return j.features.map(function (f) { var c = f.geometry.coordinates; return { lon: c[0], lat: c[1], kv: kvList(f.properties && f.properties.voltage) }; }); });
+      return j.features.map(function (f) { var c = f.geometry.coordinates; return { lon: c[0], lat: c[1], kv: kvList(f.properties && f.properties.voltage), op: netOperator(f.properties && f.properties.operator) }; }); });
     return subs; }
   function fetchAlc(b) {
     if (cache[b.key]) return Promise.resolve(cache[b.key]);
@@ -128,14 +155,14 @@
     var pct = function (x) { return (100 * x).toFixed(1) + '%'; };
     var lines = ['LAND: site box ' + (b.e0 / 1000) + ',' + (b.n0 / 1000) + ' km (2,048 m BNG tile, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
     res.rows.forEach(function (r) { lines.push('  ' + r.grade + ': ' + pct(r.share) + ' (' + r.ha.toFixed(0) + ' ha) [derived]'); });
-    lines.push('  Grades 1+2 (best and most versatile): ' + pct(res.bmv12Share) + '. Grade 3 not split into 3a/3b here: ' + pct(res.grade3Share) + ' may include BMV 3a. Field survey needed.');
+    lines.push(grade3Text(res, false) + (res.grade3Share > 0 ? '' : ' Not a field survey.'));
     if (rec.exceeded) lines.push('  WARNING: service transfer limit hit; shares are incomplete.');
-    lines.push('GRID: nearest GridAtlas substation ' + (sub ? (sub.m / 1000).toFixed(2) + ' km' + (sub.kv.length ? ' (' + sub.kv.join('/') + ' kV)' : ' (voltage not given)') + ' from the map centre [derived, straight line]' : 'not loaded') + '. Capacity: not assessed yet.');
+    lines.push(gridText(sub, false));
     lines.push('Source: ' + SRC.by + ', ' + SRC.name + '. ' + SRC.licence + '. ' + SRC.attribution + ' One query, ' + rec.ms + ' ms, ' + rec.at.slice(0, 19) + 'Z.');
-    root.__farmAssess = { box: b, rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, centre: c, exceeded: rec.exceeded, fetchedAt: rec.at };
+    root.__farmAssess = { box: b, rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at };
     if (innerWidth < 600) lines = [lines[0].replace(' (2,048 m BNG tile, ', ' (').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
-        ['  Grade 3 not split 3a/3b; field survey needed.', 'GRID: substation ' + (sub ? (sub.m / 1000).toFixed(2) + ' km' + (sub.kv.length ? ' ' + sub.kv.join('/') + ' kV' : '') : 'n/a') + ' [derived]. Capacity: not yet.',
+        [grade3Text(res, true), gridText(sub, true),
          'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.']);
     SIM.info(lines.join('\n')); var el = document.getElementById('info'); if (el) el.style.whiteSpace = 'pre-wrap';
   }
