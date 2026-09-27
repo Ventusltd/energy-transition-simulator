@@ -220,15 +220,15 @@ function pfLine(tag, lat, lon) {
   if (t.e >= 0 && t.e < 700000 && t.n >= 0 && t.n < 1300000 && lat > 49 && lat < 61.5 && lon > -9 && lon < 2.5)
     s += `
   BNG ${BNG.gridRef(t.e, t.n, 10)}  (${t.engine}${t.gapToOstn15 != null ? `, OSTN15 correction ${t.gapToOstn15.toFixed(2)} m` : ', OSTN15 not loaded'})`;
-  else s += '
-  outside GB: no National Grid, WGS84 place frame only';
+  else s += `
+  outside GB: no National Grid, WGS84 place frame only`;
   return s;
 }
 function pfReadout() {
   const c = map.getCenter(); OSTN.need(c.lat, c.lng).then(ok => { if (ok) render(); });
   if (lastBuilt) OSTN.need(lastBuilt.lat, lastBuilt.lon);
-  const render = () => { document.getElementById('pf-readout').textContent = pfLine('centre', c.lat, c.lng) + (lastBuilt ? '
-' + pfLine('block ', lastBuilt.lat, lastBuilt.lon) + `
+  const render = () => { document.getElementById('pf-readout').textContent = pfLine('centre', c.lat, c.lng) + (lastBuilt ? `
+` + pfLine('block ', lastBuilt.lat, lastBuilt.lon) + `
   anchor ${lastBuilt.anchor.lat.toFixed(7)}, ${lastBuilt.anchor.lon.toFixed(7)}` : ''); };
   render();
 }
@@ -275,6 +275,17 @@ async function detectRows() {
 }
 document.getElementById('detect').onclick = detectRows;
 
+
+// ---- Plug-in API for modules in prototype/mod/*.js (each attaches to window.SIM). ----
+window.SIM = {
+  map, blocks, wire,
+  addBlock(b) { blocks.push(b); map.triggerRepaint(); return b; },
+  removeWhere(fn) { for (let i = blocks.length - 1; i >= 0; i--) if (fn(blocks[i])) blocks.splice(i, 1); map.triggerRepaint(); },
+  repaint() { map.triggerRepaint(); },
+  info(t) { document.getElementById('info').textContent = t; },
+  addButton(label, onclick) { const b = document.createElement('button'); b.textContent = label; b.onclick = onclick; document.getElementById('bar').appendChild(b); return b; }
+};
+
 map.on('moveend', ground); map.on('zoomend', ground);
 map.on('load', () => { addGrid(); ground(); });
 const on = id => { for (const b of ['sat', 'dark', 'wire']) document.getElementById(b).classList.toggle('on', b === id); };
@@ -285,4 +296,5 @@ map.on('style.load', () => { addGrid(); if (!map.getSource('dem')) map.addSource
 document.getElementById('tilt').onclick = () => map.easeTo({ pitch: map.getPitch() > 10 ? 0 : 60, duration: 800 });
 document.getElementById('survey').onclick = e => { survey = !survey; e.target.classList.toggle('on', survey); groundKey = ''; ground(); };
 document.getElementById('here').onclick = () => { const c = map.getCenter(); block(c.lng, c.lat); };
-</script></body></html>
+</script><script>fetch('mod/index.json').then(r => r.ok ? r.json() : []).then(list => { for (const n of list) { const t = document.createElement('script'); t.src = 'mod/' + n + '.js'; document.body.appendChild(t); } }).catch(() => {});</script>
+</body></html>
