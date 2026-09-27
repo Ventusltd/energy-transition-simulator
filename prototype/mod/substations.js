@@ -28,19 +28,21 @@
   }
 
   // ---- data ----
-  var pts = null, fps = null, loading = null;
+  var pts = null, fps = null, loading = null, fpState = 'pending';   // 'loaded' | 'empty' | 'failed' once the footprint fetch settles
   function kvList(v) { return String(v || '').split(/[;:,]/).map(function (s) { return Math.round(Number(s) / 1000); })
     .filter(function (k) { return k >= 1; }).sort(function (a, b) { return b - a; }); }
   function load() {
     if (loading) return loading;
     loading = Promise.all([
       fetch(GA).then(function (r) { return r.json(); }),
-      fetch(FP_URL).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+      fetch(FP_URL).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .catch(function () { fpState = 'failed'; return null; })
     ]).then(function (res) {
       pts = res[0].features.map(function (f, i) { var c = f.geometry.coordinates;
         return { i: i, lon: c[0], lat: c[1], kv: kvList(f.properties && f.properties.voltage) }; });   // voltage only
       fps = {};
       if (res[1] && res[1].f && (!res[1].atlas || res[1].atlas === ATLAS)) res[1].f.forEach(function (r) { fps[r[0]] = { how: r[1], ring: r[2] }; });
+      if (fpState !== 'failed') fpState = Object.keys(fps).length ? 'loaded' : 'empty';
     });
     return loading;
   }
@@ -102,7 +104,7 @@
     if (fp) ring = fp.ring.map(function (p) { return loc(p[1], p[0]); });
     else { var h = EST_HALF(top); ring = [[-h, -h], [h, -h], [h, h], [-h, h], [-h, -h]]; dashed = true; }
     var L = [], f = frameOf(ring);
-    fence(L, ring, dashed);
+    fence(L, ring, dashed); var fenceN = L.length;       // the first fenceN lines are the fence, nothing else
     // plinths (estimate): count from voltage and area, laid on a row along the compound's long axis, 60% inset
     var n = Math.max(1, Math.min(8, Math.round(f.area / (top >= 275 ? 9000 : top >= 132 ? 3500 : 1500)))),
         pw = Math.min(6, f.hw * 0.6 / n + 1), pd = Math.min(4, f.hd * 0.35), ph = top >= 275 ? 5 : top >= 132 ? 4 : 2.5;
@@ -114,7 +116,10 @@
     }
     if (n > 1) seg(L, [f.cx - 0.6 * f.hw * f.ux - f.uy * pd * 2.2, f.cy - 0.6 * f.hw * f.uy + f.ux * pd * 2.2],
                       [f.cx + 0.6 * f.hw * f.ux - f.uy * pd * 2.2, f.cy + 0.6 * f.hw * f.uy + f.ux * pd * 2.2], ph * 2);   // busbar
-    return place({ lon: s.lon, lat: s.lat, lines: L, substation: s.i, est: dashed, top: Math.max(f.hw, f.hd), f: f });
+    // fence: 'mapped' = drawn through exactly the OSM ring vertices (fenceLL, lon/lat as stored); 'estimated' = dashed square.
+    return place({ lon: s.lon, lat: s.lat, lines: L, substation: s.i, est: dashed, top: Math.max(f.hw, f.hd), f: f,
+      fence: dashed ? 'estimated' : 'mapped', fenceN: fenceN, fenceLL: dashed ? null : fp.ring.map(function (p) { return [p[0], p[1]]; }),
+      prov: dashed ? 'estimated: fence square sized by voltage' : 'mapped: fence at OSM footprint vertices (ODbL)' });
   }
   function labelBlock(s, c, bearing) {
     var L = [], t = kvText(s.kv), size = Math.max(2.5, Math.min(7, 1.6 * c.top / (1.5 * t.length))); // text no wider than the compound
@@ -123,6 +128,23 @@
   }
 
   var on = false, built = {}, lastC = null, lastB = null;
+  function counts() { var m = 0, e = 0; for (var i in built) { if (built[i].fence === 'mapped') m++; else e++; } return { mapped: m, estimated: e }; }
+  function labelText() {
+    var c = counts(), t = c.mapped + ' fences mapped (OSM footprint), ' + c.estimated + ' estimated';
+    if (fpState !== 'loaded') t += '. Footprints not loaded (' + fpState + '): every fence here is dashed, an estimate.';
+    return t;
+  }
+  // The substation label has its own box, so other modules writing #info cannot hide the fence counts.
+  var lab = null;
+  function showLabel() {
+    if (!lab) { lab = document.createElement('div'); lab.id = 'subs-label'; lab.setAttribute('role', 'status');
+      lab.style.cssText = 'position:absolute;left:8px;bottom:84px;z-index:2;font:13px monospace;color:#dfe;background:rgba(0,0,0,.7);padding:6px 8px;border-radius:6px;max-width:46em';
+      document.body.appendChild(lab); }
+    lab.style.display = on ? '' : 'none';
+    lab.textContent = 'Substations: ' + labelText();
+  }
+  function credit() { return fpState === 'loaded' ? CREDIT
+    : 'Substations: mapped positions (GridAtlas points). OpenStreetMap footprints not loaded: every fence is dashed and sized by voltage, an estimate, as are all plinths.'; }
   function dist(a, b) { var x = (b.lon - a.lon) * 111320 * Math.cos(a.lat * D), y = (b.lat - a.lat) * 110574; return Math.hypot(x, y); }
   function nearby(c, r, want) {
     return pts.filter(function (s) { return (!want || s.kv.indexOf(want) >= 0); })
@@ -131,7 +153,7 @@
   }
   function refresh(force) {
     var map = SIM.map;
-    if (!on || !pts || map.getZoom() < MINZ) { if (Object.keys(built).length) { SIM.removeWhere(function (b) { return b.substation !== undefined || b.substationLabel !== undefined; }); built = {}; SIM.repaint(); } return; }
+    if (!on || !pts || map.getZoom() < MINZ) { if (Object.keys(built).length) { SIM.removeWhere(function (b) { return b.substation !== undefined || b.substationLabel !== undefined; }); built = {}; SIM.repaint(); } if (lab || on) showLabel(); return; }
     var cc = map.getCenter(), c = { lon: cc.lng, lat: cc.lat }, br = map.getBearing();
     var moved = !lastC || dist(lastC, c) > RADIUS / 3, turned = lastB === null || Math.abs(((br - lastB + 540) % 360) - 180) > 30;
     if (!force && !moved && !turned) return;
@@ -142,7 +164,8 @@
       if (!built[i]) SIM.addBlock(cb);
       nb[i] = cb; if (turned || !built[i]) SIM.addBlock(labelBlock(s, cb, br));
     }
-    built = nb; lastC = c; if (turned) lastB = br; SIM.repaint();
+    built = nb; lastC = c; if (turned) lastB = br; SIM.repaint(); showLabel();
+    if (force) SIM.info('Substations: ' + labelText() + '. ' + credit());
   }
 
   // ---- "go substation 132": fly to the nearest, then circle it once (the animation) ----
@@ -152,10 +175,11 @@
       var best = nearby(c, 1e7, kv || 0)[0];
       if (!best) { SIM.info('No substation with ' + kv + ' kV in the GridAtlas points.'); return null; }
       on = true; syncBtn(); var s = best.s, fp = fps[s.i];
-      SIM.info('Nearest ' + (kv ? kv + ' kV ' : '') + 'substation: ' + (best.d / 1000).toFixed(1) + ' km, ' + kvText(s.kv) + ', ' +
-        s.lat.toFixed(5) + ', ' + s.lon.toFixed(5) + (fp ? '. Fence from mapped footprint.' : '. Fence dashed: size estimated.') + ' ' + CREDIT);
+      var head = 'Nearest ' + (kv ? kv + ' kV ' : '') + 'substation: ' + (best.d / 1000).toFixed(1) + ' km, ' + kvText(s.kv) + ', ' +
+        s.lat.toFixed(5) + ', ' + s.lon.toFixed(5) + (fp ? '. Its fence is the mapped OSM footprint.' : '. Its fence is dashed: size estimated.');
+      SIM.info(head + ' ' + credit());
       map.flyTo({ center: [s.lon, s.lat], zoom: 17.2, pitch: 62, bearing: map.getBearing(), speed: 1.6, curve: 1.4 });
-      map.once('moveend', function () { refresh(true);
+      map.once('moveend', function () { refresh(true); SIM.info(head + ' Here: ' + labelText() + '. ' + credit());
         var b0 = map.getBearing(); map.rotateTo(b0 + 120, { duration: 6000, easing: function (t) { return t; } }); });
       return { lat: s.lat, lon: s.lon, kv: s.kv, km: +(best.d / 1000).toFixed(2), footprint: fp ? fp.how : 'estimate' };
     });
@@ -170,7 +194,7 @@
   function syncBtn() { if (btn) btn.classList.toggle('on', on); }
   function ui() {
     var bar = document.getElementById('bar');
-    var toggle = function () { on = !on; syncBtn(); if (on) { SIM.info(CREDIT); load().then(function () { refresh(true); }); } else refresh(true); };
+    var toggle = function () { on = !on; syncBtn(); if (on) { SIM.info(credit()); load().then(function () { refresh(true); }); } else refresh(true); };
     if (SIM.addButton) btn = SIM.addButton('Substations', toggle); else { btn = document.createElement('button'); btn.textContent = 'Substations'; btn.onclick = toggle; if (bar) bar.appendChild(btn); }
     var inp = document.createElement('input'); inp.placeholder = 'go substation 132'; inp.setAttribute('aria-label', 'Substation command');
     inp.style.cssText = 'font:14px monospace;padding:10px;border-radius:6px;border:1px solid #456;background:#0b1220;color:#dfe;min-height:44px;width:12em;box-sizing:border-box';
@@ -181,11 +205,17 @@
 
   // Exact check: each compound sits at its GridAtlas point (===), and says whether its fence is a mapped footprint.
   function check() {
-    var exact = 0, bad = [], mapped = 0, est = 0;
+    var exact = 0, bad = [], mapped = 0, est = 0, fenceBad = [];
     for (var i in built) { var b = built[i], s = pts[b.substation];
       if (s && b.lon === s.lon && b.lat === s.lat) exact++; else bad.push(b.substation);
-      if (b.est) est++; else mapped++; }
-    return { live: Object.keys(built).length, exact: exact, bad: bad, footprint: mapped, estimated: est, credit: CREDIT };
+      if (b.fence === 'estimated') est++; else mapped++;
+      if (b.fence === 'mapped') { var r = fps[b.substation] && fps[b.substation].ring, ok = !!r && r.length === b.fenceLL.length;
+        for (var k = 0; ok && k < r.length; k++) ok = r[k][0] === b.fenceLL[k][0] && r[k][1] === b.fenceLL[k][1];
+        if (!ok) fenceBad.push(b.substation); } }
+    return { live: Object.keys(built).length, exact: exact, bad: bad, footprint: mapped, estimated: est, fenceBad: fenceBad,
+      fpState: fpState, label: labelText(), credit: credit(),
+      fences: Object.keys(built).map(function (i) { var b = built[i]; return { i: b.substation, fence: b.fence, fenceLL: b.fenceLL, anchor: b.anchor,
+        pts: b.lines.slice(0, b.fenceN).reduce(function (a, l) { a.push([l[0], l[1]], [l[3], l[4]]); return a; }, []) }; }) };
   }
 
   function start() {

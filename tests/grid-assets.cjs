@@ -7,6 +7,9 @@
 //   4. place-frame round trip: each tower's local base point maps back to its lat/lon within 1 mm (consistency only);
 //   5. no drawn tower falls inside a substation footprint (footprints read in Node, own point-in-polygon);
 //   6. estimated infill towers lie on the straight segment between two line vertices (a place with a long span);
+//   8. substation fences: every mapped fence === its ring in substations-footprints.odbl.json (raw file, no tolerance),
+//      estimated fences flagged and counted apart, the label shows the counts, and every drawn fence point lies on its raw
+//      ring (converted back by the overlay's own place frame, measured in Node), at the 400 kV and a 132 kV compound;
 //   7. the labels on screen say "assumed at mapped line vertices", name GridAtlas and OpenStreetMap, and say what is estimated.
 // Screenshots go to $OUT (default test-output/grid-assets). Exit 1 on any FAIL.
 const http = require('http'), fs = require('fs'), path = require('path');
@@ -35,7 +38,35 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
       for (const c of g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []) for (const p of c) V.add(kv + '|' + p[0] + '|' + p[1]); }
     await wait(1000);
   }
-  const FPS = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'substations-footprints.odbl.json'), 'utf8')).f.map(r => r[2]);
+  const FPRAW = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'substations-footprints.odbl.json'), 'utf8')).f;
+  const FPS = FPRAW.map(r => r[2]), FPR = new Map(FPRAW.map(r => [r[0], r[2]]));
+  // Distance in metres from a lon/lat point to a lon/lat ring polyline (local equirectangular about the point; sub-mm at < 1 km).
+  const offRing = (q, R) => { const kx = 111320 * Math.cos(q[1] * Math.PI / 180), ky = 110574; let best = Infinity;
+    for (let i = 0; i + 1 < R.length; i++) { const ax = (R[i][0] - q[0]) * kx, ay = (R[i][1] - q[1]) * ky, bx = (R[i + 1][0] - q[0]) * kx, by = (R[i + 1][1] - q[1]) * ky;
+      const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0;
+      best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy)); } return best; };
+  // Fence checks on one compound view: exact ring, estimated apart, label counts, placement on the raw ring.
+  const fenceChecks = async (pg, tag) => {
+    const Z = await pg.evaluate(() => { const c = window.SUBS.check(), PF = window.__pf.PF;
+      c.fences.forEach(f => { f.ll = f.pts.map(q => { const g = PF.fromLocal(f.anchor, q[0], q[1], 0); return [g.lon, g.lat]; }); delete f.pts; });
+      const el = document.getElementById('subs-label'); return { c, info: el ? el.textContent : '' }; });
+    const F = Z.c.fences, M = F.filter(f => f.fence === 'mapped'), E = F.filter(f => f.fence === 'estimated');
+    const notExact = M.filter(f => { const R = FPR.get(f.i); return !R || R.length !== f.fenceLL.length || R.some((p, k) => p[0] !== f.fenceLL[k][0] || p[1] !== f.fenceLL[k][1]); });
+    check(`${tag}: every mapped fence === its ring in the raw footprint file (no tolerance)`, M.length > 0 && notExact.length === 0 && Z.c.fenceBad.length === 0,
+      `${M.length - notExact.length}/${M.length} rings exact (${M.reduce((a, f) => a + f.fenceLL.length, 0)} vertices); module self-check bad ${Z.c.fenceBad.length}`);
+    const tagged = F.every(f => f.fence === 'mapped' || f.fence === 'estimated'), estHasRing = E.filter(f => FPR.has(f.i));
+    check(`${tag}: estimated fences flagged 'estimated' and counted apart`, tagged && Z.c.footprint === M.length && Z.c.estimated === E.length && M.length + E.length === Z.c.live && estHasRing.length === 0,
+      `${M.length} mapped + ${E.length} estimated = ${Z.c.live} live; ${estHasRing.length} estimated fences that had a ring in the file`);
+    const want = `${M.length} fences mapped (OSM footprint), ${E.length} estimated`;
+    check(`${tag}: on-screen label shows "${want}"`, Z.info.includes(want), Z.info);
+    let worst = 0, n = 0, corner = 0;
+    for (const f of M) { const R = FPR.get(f.i); if (!R) continue;
+      for (const q of f.ll) { worst = Math.max(worst, offRing(q, R)); n++; }
+      for (const v of R) corner = Math.max(corner, Math.min(...f.ll.map(q => Math.hypot((q[0] - v[0]) * 111320 * Math.cos(v[1] * Math.PI / 180), (q[1] - v[1]) * 110574)))); }
+    check(`${tag}: every drawn fence point on its raw ring, 0 m off (Node, raw file; float floor 1 mm)`, n > 0 && worst < 0.001 && corner < 0.001,
+      `${n} fence points: worst ${worst.toFixed(6)} m off the ring; every ring vertex has a post within ${corner.toFixed(6)} m`);
+    return { mapped: M.length, estimated: E.length, worst, info: Z.info };
+  };
   const inRing = (x, y, R) => { let c = false; for (let i = 0, j = R.length - 1; i < R.length; j = i++) { const [xi, yi] = R[i], [xj, yj] = R[j];
     if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
   const inSub = (lon, lat) => FPS.some(R => inRing(lon, lat, R));
@@ -46,7 +77,12 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
       for (const c of g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []) for (let i = 1; i < c.length; i++) {
         const a = c[i - 1], b = c[i], d = Math.hypot((b[0] - a[0]) * kx(a[1]), (b[1] - a[1]) * 111320);
         if (d > 1.6 * 360 && d < 2000 && a[1] > 51.5 && a[1] < 53.5) { LONG = { lon: (a[0] + b[0]) / 2, lat: (a[1] + b[1]) / 2, d }; break outer; } } } }
-  const S = (await (await fetch(`${GA}/grid_substations.geojson`)).json()).features.map(f => f.geometry.coordinates);
+  const SF = (await (await fetch(`${GA}/grid_substations.geojson`)).json()).features, S = SF.map(f => f.geometry.coordinates);
+  // A 132 kV compound (top voltage 132 kV) with an OSM footprint, nearest the start: a second, smaller compound to look at.
+  const top = f => Math.max(...String((f.properties || {}).voltage || '').split(/[;:,]/).map(v => Math.round(Number(v) / 1000)).filter(k => k >= 1), 0);
+  const C132 = SF.map((f, i) => ({ i, lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], kv: top(f) }))
+    .filter(s => s.kv === 132 && FPR.has(s.i))
+    .map(s => ({ ...s, d: Math.hypot((s.lon - START.lon) * 68000, (s.lat - START.lat) * 111000) })).sort((a, b) => a.d - b.d)[0];
 
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}/overlay.html`;
@@ -112,9 +148,17 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
   const sbad = Q.blocks.filter(x => !(S[x.i] && S[x.i][0] === x.lon && S[x.i][1] === x.lat));
   check('substation compounds === GridAtlas points (raw file)', Q.blocks.length > 0 && sbad.length === 0, `${Q.blocks.length - sbad.length}/${Q.blocks.length} exact; footprint fences ${Q.c.footprint}, estimated ${Q.c.estimated}`);
   const cr = Q.c.credit; check('substation label: mapped positions, GridAtlas, OpenStreetMap, estimates', /mapped positions/.test(cr) && /GridAtlas/.test(cr) && /OpenStreetMap/.test(cr) && /estimate/.test(cr), cr);
+  const fc400 = await fenceChecks(p, '400 kV compound');
   await p.screenshot({ path: path.join(OUT, '4-substation-400.png') });
   await p.evaluate(() => SIM.map.jumpTo({ zoom: 18, pitch: 75 })); await p.waitForTimeout(5000);
   await p.screenshot({ path: path.join(OUT, '5-substation-walk.png') });
+  const go132 = C132;
+  await p.evaluate(s => SIM.map.jumpTo({ center: [s.lon, s.lat], zoom: 17.4, pitch: 62, bearing: 40 }), C132);
+  await p.waitForTimeout(3000); await p.evaluate(() => window.SUBS.show(true)); await p.waitForTimeout(5000);
+  const fc132 = await fenceChecks(p, '132 kV compound');
+  await p.screenshot({ path: path.join(OUT, '8-substation-132.png') });
+  await p.evaluate(() => SIM.map.jumpTo({ zoom: 18, pitch: 68 })); await p.waitForTimeout(5000);
+  await p.screenshot({ path: path.join(OUT, '9-substation-132-walk.png') });
 
   check('no page errors', errs.length === 0, errs.join(' | ') || 'none');
 
@@ -132,8 +176,14 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
   check('footprints blocked: on-screen label says "not loaded" and makes no substation claim', /not loaded/.test(F.info) && !/none drawn inside/.test(F.info), F.info);
   check('footprints blocked: no page errors', errs2.length === 0, errs2.join(' | ') || 'none');
   await p2.screenshot({ path: path.join(OUT, '7-footprints-blocked.png') });
+  await p2.evaluate(() => window.SUBS.go(400)); await p2.waitForTimeout(9000);
+  const B = await p2.evaluate(() => ({ c: window.SUBS.check(), info: (document.getElementById('subs-label') || {}).textContent || '' }));
+  check('footprints blocked: substation label claims no mapped fence, says not loaded, all fences estimated',
+    B.c.fpState === 'failed' && B.c.live > 0 && B.c.footprint === 0 && B.c.estimated === B.c.live && B.info.includes(`0 fences mapped (OSM footprint), ${B.c.live} estimated`) && /not loaded/.test(B.info) && !/[1-9]\d* fences mapped/.test(B.info),
+    `fpState ${B.c.fpState}; ${B.c.footprint} mapped, ${B.c.estimated} estimated; ${B.info}`);
+  await p2.screenshot({ path: path.join(OUT, '10-substation-fp-blocked.png') });
   await b.close(); server.close();
-  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ go, results }, null, 1));
+  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ go, go132, fc400, fc132, results }, null, 1));
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}  -- ${r.evidence}`);
   const failed = results.filter(r => !r.ok).length; console.log(`\n${results.length - failed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
