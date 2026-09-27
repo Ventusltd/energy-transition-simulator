@@ -95,10 +95,10 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
     await p.evaluate(t => SIM.map.jumpTo({ center: [t.lon, t.lat], zoom: 16, pitch: 65, bearing: 20 }), LONG);
     await p.waitForTimeout(6000);
     const E = await p.evaluate(() => window.__pylonsReal.check());
-    check('estimated towers drawn and each on a straight segment between two line vertices', E.est > 0 && E.estBad.length === 0 && E.bad.length === 0,
+    check('consistency: estimated tower on its own mapped segment', E.est > 0 && E.estBad.length === 0 && E.bad.length === 0,
       `span ${LONG.d.toFixed(0)} m; ${E.est} estimated, ${E.estBad.length} off-segment; ${E.exact} assumed-at-vertex`);
     await p.screenshot({ path: path.join(OUT, '6-estimated-span.png') });
-  } else check('estimated towers drawn and each on a straight segment between two line vertices', false, 'no long span found');
+  } else check('consistency: estimated tower on its own mapped segment', false, 'no long span found');
 
   // 2 and 5: substations. Fly to the nearest 400 kV compound.
   const go = await p.evaluate(() => window.SUBS.go(400));
@@ -106,7 +106,9 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
   const Q = await p.evaluate(() => ({ c: window.SUBS.check(), blocks: SIM.blocks.filter(b => b.substation !== undefined).map(b => ({ i: b.substation, lon: b.lon, lat: b.lat })), info: document.getElementById('info').textContent }));
   const T4 = await p.evaluate(() => ({ t: SIM.blocks.filter(b => b.pylonsReal).map(b => [b.lon, b.lat]), c: window.__pylonsReal.check() }));
   const in4 = T4.t.filter(q => inSub(q[0], q[1]));
-  check('no tower inside a substation footprint (at the 400 kV compound)', T4.t.length > 0 && in4.length === 0 && T4.c.inSub.length === 0, `${in4.length} inside of ${T4.t.length}; module dropped ${T4.c.dropped}`);
+  check('no tower inside a substation footprint (at the 400 kV compound; Node point-in-polygon, independent of the module)', T4.t.length > 0 && in4.length === 0 && T4.c.inSub.length === 0, `${in4.length} inside of ${T4.t.length}; module dropped ${T4.c.dropped}`);
+  check('footprints loaded and towers dropped inside them (normal load)', T4.c.fpState === 'loaded' && T4.c.fps > 0 && T4.c.dropped > 0 && /none drawn inside a mapped substation footprint/.test(T4.c.label),
+    `fpState ${T4.c.fpState}, ${T4.c.fps} footprints, ${T4.c.dropped} dropped`);
   const sbad = Q.blocks.filter(x => !(S[x.i] && S[x.i][0] === x.lon && S[x.i][1] === x.lat));
   check('substation compounds === GridAtlas points (raw file)', Q.blocks.length > 0 && sbad.length === 0, `${Q.blocks.length - sbad.length}/${Q.blocks.length} exact; footprint fences ${Q.c.footprint}, estimated ${Q.c.estimated}`);
   const cr = Q.c.credit; check('substation label: mapped positions, GridAtlas, OpenStreetMap, estimates', /mapped positions/.test(cr) && /GridAtlas/.test(cr) && /OpenStreetMap/.test(cr) && /estimate/.test(cr), cr);
@@ -115,6 +117,21 @@ const START = { lat: 52.2441634, lon: -1.0453368 };
   await p.screenshot({ path: path.join(OUT, '5-substation-walk.png') });
 
   check('no page errors', errs.length === 0, errs.join(' | ') || 'none');
+
+  // Failure path: the footprint file is blocked. The module must not claim substations are cleared.
+  const p2 = await b.newPage({ viewport: { width: 1280, height: 800 } });
+  const errs2 = []; p2.on('pageerror', e => errs2.push(e.message));
+  let aborted = 0;
+  await p2.route(/substations-footprints\.odbl\.json/, r => { aborted++; return r.abort(); });
+  await p2.goto(`${base}?lat=${START.lat}&lon=${START.lon}`, { waitUntil: 'load' });
+  await p2.waitForFunction(() => window.__pylonsReal && window.__pylonsReal.count() > 0, null, { timeout: 30000 }).catch(() => {});
+  await p2.waitForTimeout(4000);
+  const F = await p2.evaluate(() => ({ c: window.__pylonsReal.check(), info: document.getElementById('info').textContent }));
+  check('footprints blocked: fpState failed, 0 footprints, nothing claimed dropped', aborted > 0 && F.c.fpState === 'failed' && F.c.fps === 0 && F.c.dropped === 0,
+    `aborted ${aborted}, fpState ${F.c.fpState}, ${F.c.fps} footprints, dropped ${F.c.dropped}, ${F.c.live} towers`);
+  check('footprints blocked: on-screen label says "not loaded" and makes no substation claim', /not loaded/.test(F.info) && !/none drawn inside/.test(F.info), F.info);
+  check('footprints blocked: no page errors', errs2.length === 0, errs2.join(' | ') || 'none');
+  await p2.screenshot({ path: path.join(OUT, '7-footprints-blocked.png') });
   await b.close(); server.close();
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ go, results }, null, 1));
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}  -- ${r.evidence}`);

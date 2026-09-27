@@ -26,6 +26,7 @@
   const FP_URL = new URL('substations-footprints.odbl.json', here).href;
   let fps = [];                          // [{ bbox, ring }] substation footprints, [lon, lat] rings
   let dropped = 0;                       // towers dropped because they fall inside a footprint
+  let fpState = 'pending';               // 'loaded' | 'failed' | 'empty' once the footprint fetch settles
 
   let SIM, map, PF, on = true, btn = null;
   const lines = { };                     // kv -> [{ bbox, coords }]
@@ -39,11 +40,12 @@
   function start() {
     map = SIM.map;
     if (SIM.addButton) { btn = SIM.addButton('Pylons (mapped)', () => { on = !on; btn.classList.toggle('on', on); refresh(); }); btn.classList.add('on'); }
-    const fpLoad = fetch(FP_URL).then(r => r.ok ? r.json() : null).then(j => {
+    const fpLoad = fetch(FP_URL).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(j => {
       fps = ((j && j.f) || []).map(r => { const ring = r[2]; let w = 180, s = 90, e = -180, n = -90;
         for (const [x, y] of ring) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y; }
         return { bbox: [w, s, e, n], ring }; });
-    }).catch(() => { fps = []; });
+      fpState = fps.length ? 'loaded' : 'empty';
+    }).catch(() => { fps = []; fpState = 'failed'; });
     Promise.all([fpLoad].concat(Object.keys(KV).map(kv => fetch(`${GA}/grid_${kv}kv.geojson`).then(r => r.json()).then(j => {
       const L = [];
       for (const f of j.features || []) { const g = f.geometry; if (!g) continue;
@@ -158,15 +160,18 @@
   // The on-screen label: what is a mapped position and what is estimated, with the count of each.
   function label() {
     let m = 0, e = 0; for (const bk of live.values()) bk.est ? e++ : m++;
+    // The substation claim is made only when the footprints actually loaded; otherwise the label says they did not.
+    const sub = fpState === 'loaded' && fps.length > 0 ? 'none drawn inside a mapped substation footprint'
+      : 'substation footprints not loaded: towers inside substations are NOT removed';
     return `Pylons: ${m} towers assumed at mapped line vertices (GridAtlas, © OpenStreetMap contributors, ODbL) and ${e} estimated infill towers; ` +
-      'none drawn inside a mapped substation footprint. Tower shape, height, arms and conductor sag are estimates by voltage class.';
+      sub + '. Tower shape, height, arms and conductor sag are estimates by voltage class.';
   }
   // Terrain arrives after the first build: re-grade the blocks built on missing heights (their spans too).
   function regrade() { SIM.removeWhere(b => b.pylonsReal); live.clear(); refresh(); }
 
-  // Exact check: every tower not flagged estimated must equal a vertex of its GridAtlas line (===, no tolerance),
-  // and every estimated tower must lie on the straight segment between two vertices of its line (ends === vertices,
-  // off-line distance < 1 mm, strictly between the ends); no drawn tower may fall inside a substation footprint.
+  // Exact check: every tower not flagged estimated must equal a vertex of its GridAtlas line (===, no tolerance).
+  // Consistency, not truth: an estimated tower must lie on its own mapped segment (ends === vertices of its line,
+  // off-line distance < 1 mm, strictly between the ends); no drawn tower may fall inside a loaded substation footprint.
   function check() {
     let exact = 0, bad = [], est = 0, estBad = [], inSub = [];
     for (const bk of live.values()) {
@@ -178,8 +183,9 @@
       const L2 = ax * ax + ay * ay, u = (px * ax + py * ay) / L2, off = Math.abs(px * ay - py * ax) / Math.sqrt(L2);
       if (!(off < 0.001 && u > 0 && u < 1)) estBad.push(bk.id);
     }
-    return { live: live.size, exact, est, bad, estBad, inSub, dropped, label: label() };
+    return { live: live.size, exact, est, bad, estBad, inSub, dropped, fpState, fps: fps.length,
+      estCheck: 'consistency: estimated tower on its own mapped segment', label: label() };
   }
 
-  window.__pylonsReal = { live, refresh, count: () => live.size, towersOf, KV, check, label, lines, inSubstation, fps: () => fps.length };
+  window.__pylonsReal = { live, refresh, count: () => live.size, towersOf, KV, check, label, lines, inSubstation, fps: () => fps.length, fpState: () => fpState };
 })();
