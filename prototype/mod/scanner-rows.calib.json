@@ -11,7 +11,10 @@
     { "count": 1, "reason": "pitch 5.0 m with a tight spread: below any plausible table pitch at this zoom, not confirmed on a closer picture, so held back" }
   ],
   "row_pitch_m": { "N": 1, "median": 26.05, "iqr": [24.59, 26.98], "windows": 449, "tag": "derived from imagery (estimated)" },
-  "row_axis": { "N": 1, "value": "north-south (bearing median 177.5 deg); tables face east and west", "tag": "derived from imagery (estimated)" },
+  "row_axis": { "N": 1, "value": "north-south; tables face east and west", "bearing_deg": { "median": 1.0, "iqr": [0.0, 2.5], "range": "axial, taken on -90 to 90 deg from north" }, "tag": "derived from imagery (estimated)" },
+  "row_pitch_ceiling_m": { "value": 23.9, "swept_to": 27.5, "meaning": "at zoom 17 (0.75 m per pixel) a 96 px window with the DC cut at radius 3 cannot see a pitch above 32 px, about 23.9 m; the brute-force sweep reaches 15 % past that, about 27.5 m. A median of 26 m sits near this ceiling.", "tag": "derived (tool geometry)" },
+  "independence": "The one accepted sample is the same farm the overlay already draws from its baked row file and the planning hints. Agreement with those is consistency between two readings of one farm, not a second source.",
+  "corrections": [ "Bearing: the fit read image y as north, which mirrored every bearing (b became 180 - b). Fixed and proved on 18 synthetic stripe fields at 9 known bearings: worst error 1.0 deg after the fix, 90 deg before; the NumPy witness matched the GPU to 0.0 deg on 4 of them. The earlier 177.5 deg mirrors to 2.5 deg; the axial median over the same 449 windows is 1.0 deg." ],
   "panel_cover_fraction": { "N": 1, "median": 0.88, "meaning": "share of each 72 m window the dark-panel mask covers, over windows with cover of at least 0.4 (not ground cover ratio)", "tag": "derived from imagery (estimated)" },
   "half_pitch_share": { "N": 1, "value": 0.072, "meaning": "share of panel windows whose pitch reads 12 to 16 m (each face read as a row); small, so the median is the full tent pitch", "tag": "derived from imagery (estimated)" },
   "witness": { "engine": "cupy", "numpy_pairs": 15, "max_pitch_diff_m": 1.19, "max_bearing_diff_deg": 3.0, "verdict": "consistent within one sweep step, not identical" },

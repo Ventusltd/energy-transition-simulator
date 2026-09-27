@@ -72,6 +72,10 @@ check('calib: every value tagged estimated (imagery), none claims measured', ['r
 check('calib: no coordinates, register ids or sample keys in the public fixture', !/\d{1,2}\.\d{4,}|REPD|s[1-6]-|lat|lon/i.test(calRaw), 'clean');
 check('calib: pitch median inside its own IQR, and a plausible table pitch (6 to 40 m)', cal.row_pitch_m.iqr[0] <= cal.row_pitch_m.median && cal.row_pitch_m.median <= cal.row_pitch_m.iqr[1] && cal.row_pitch_m.median > 6 && cal.row_pitch_m.median < 40, cal.row_pitch_m.median);
 check('calib: the on-screen sentence carries N and the tag', /1 of 4 solar samples/.test(M.calibText(cal)) && /estimated/.test(M.calibText(cal)) && M.calibText(null) === 'No row calibration.', M.calibText(cal));
+check('calib: row bearing is axial (-90 to 90 deg), median inside its IQR, and no mirrored figure near 180 is left', (b => b && b.median > -90 && b.median <= 90 && b.iqr[0] <= b.median && b.median <= b.iqr[1])(cal.row_axis.bearing_deg) && !/bearing median 1[5-9]\d/.test(calRaw), JSON.stringify(cal.row_axis.bearing_deg));
+check('calib: the pitch ceiling of the tool is stated, and the median does not exceed the swept reach', cal.row_pitch_ceiling_m && cal.row_pitch_m.median <= cal.row_pitch_ceiling_m.swept_to && /ceiling/.test(cal.row_pitch_ceiling_m.meaning), cal.row_pitch_ceiling_m && cal.row_pitch_ceiling_m.swept_to);
+check('calib: the on-screen sentence carries the corrected row axis', /row axis 1 deg from north/.test(M.calibText(cal)), M.calibText(cal));
+check('calib: the fixture says the one sample is not independent of the baked rows', /not a second source/.test(cal.independence || ''), 'independence');
 
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}  -- ${r.ev}`);
 const failed = results.filter(r => !r.ok).length; console.log(`\n${results.length - failed} passed, ${failed} failed`);

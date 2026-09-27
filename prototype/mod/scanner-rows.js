@@ -85,7 +85,7 @@
   // Calibration fixture (scanner-rows.calib.json, owned here, read by procedural): one honest sentence from it.
   api.calibText = c => !c || !c.row_pitch_m ? 'No row calibration.' :
     `Row calibration: ${c.samples_accepted} of ${c.samples_solar} solar samples accepted (${c.samples_total} in all), ` +
-    `pitch median ${c.row_pitch_m.median} m, ${c.tag}.`;
+    `pitch median ${c.row_pitch_m.median} m` + (c.row_axis && c.row_axis.bearing_deg ? `, row axis ${c.row_axis.bearing_deg.median} deg from north` : '') + `, ${c.tag}.`;
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; return; }
 
   // ---- browser ----
