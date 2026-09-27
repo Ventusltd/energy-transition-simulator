@@ -3,9 +3,11 @@
 // hash-checked loader the page uses, so a checkout that alters the data (CRLF line endings on ostn15.json) FAILS here
 // instead of silently dropping the page to Helmert (about 2 m off).
 //
-// References (external truth): OS OSTN15 test points TP01 to TP12 from OSTN15_TestInput_ETRStoOSGB / TestOutput
-// (ETRS89 lat/lon and National Grid E/N as the OS publishes them, to the mm). These are the OS test points inside the
-// committed England blocks. Tolerance 0.1 m, the owner's lane target.
+// References (external truth): OS OSTN15 test points TP01 to TP20 from OSTN15_TestInput_ETRStoOSGB.txt and
+// OSTN15_TestOutput_ETRStoOSGB.txt (ETRS89 lat/lon and National Grid E/N as the OS publishes them, to the mm), in the
+// OS pack OSTN15-NTv2.zip (ordnancesurvey.co.uk/documents/resources/OSTN15-NTv2.zip, Crown copyright, OGL). Only the
+// numbers are copied, not the files. TP01 to TP20 all lie inside the committed blocks (south of 54 N); TP21 onward are
+// not used here. Tolerance 0.1 m, the owner's lane target.
 // Run: node tests/coords-reference.mjs      (exit 1 on any FAIL)
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -39,7 +41,11 @@ const TP = [['TP01', 49.92226393730, -6.29977752014, 91492.146, 11318.804], ['TP
   ['TP05', 50.93127937910, -1.45051433700, 438710.920, 114792.250], ['TP06', 51.40078220140, -3.55128349240, 292184.870, 168003.465],
   ['TP07', 51.37447025550, 1.44454730409, 639821.835, 169565.858], ['TP08', 51.42754743020, -2.54407618349, 362269.991, 169978.690],
   ['TP09', 51.48936564950, -0.11992557180, 530624.974, 178388.464], ['TP10', 51.85890896400, -4.30852476960, 241124.584, 220332.641],
-  ['TP11', 51.89436637350, 0.89724327012, 599445.590, 225722.826], ['TP12', 52.25529381630, -2.15458614387, 389544.190, 261912.153]];
+  ['TP11', 51.89436637350, 0.89724327012, 599445.590, 225722.826], ['TP12', 52.25529381630, -2.15458614387, 389544.190, 261912.153],
+  ['TP13', 52.25160951230, -0.91248956970, 474335.969, 262047.755], ['TP14', 52.75136687170, 0.40153547065, 562180.547, 319784.995],
+  ['TP15', 52.96219109410, -1.19747655922, 454002.834, 340834.943], ['TP16', 53.34480280190, -2.64049320810, 357455.843, 383290.436],
+  ['TP17', 53.41628516040, -4.28918069756, 247958.971, 393492.909], ['TP18', 53.41630925420, -4.28917792869, 247959.241, 393495.583],
+  ['TP19', 53.77911025760, -3.04045490691, 331534.564, 431920.794], ['TP20', 53.80021519630, -1.66379168242, 422242.186, 433818.701]];
 
 let worstF = 0, worstI = 0, worstRT = 0, worstH = 0;
 for (const [id, lat, lon, E, N] of TP) {
@@ -54,7 +60,8 @@ for (const [id, lat, lon, E, N] of TP) {
   check(`${id} toLocal/fromLocal round trip within 1 mm`, dRT <= 0.001, `${(dRT * 1000).toFixed(6)} mm at ${a.key}`);
 }
 console.log(`worst: forward ${worstF.toFixed(4)} m, inverse ${worstI.toFixed(4)} m, local round trip ${(worstRT * 1000).toFixed(6)} mm; Helmert alone worst ${worstH.toFixed(2)} m`);
-console.log(`references: ${TP.length} OS test points (external truth); the lane target is 20, so ${20 - TP.length} are still missing`);
+console.log(`references: ${TP.length} OS test points (external truth); lane target 20${TP.length >= 20 ? ' met' : `, ${20 - TP.length} missing`}`);
+check('at least 20 OS reference points checked', TP.length >= 20, `${TP.length} points`);
 const fail = results.filter(r => !r.ok).length;
 console.log(`${results.length - fail}/${results.length} PASS`);
 process.exit(fail ? 1 : 0);
