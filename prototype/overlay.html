@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulator overlay</title>
+<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html,body,#map{margin:0;height:100%;background:#000}
+  #bar{position:absolute;left:8px;top:8px;z-index:2;display:flex;gap:6px;flex-wrap:wrap}
+  #bar button{font:14px sans-serif;padding:10px 12px;border-radius:6px;border:1px solid #456;background:#0b1220;color:#dfe;min-height:44px}
+  #bar button.on{background:#1d4ed8}
+  #info{position:absolute;left:8px;bottom:28px;z-index:2;font:13px sans-serif;color:#dfe;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:6px}
+  #joy{position:absolute;right:24px;bottom:40px;z-index:3;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.3);touch-action:none}
+  #knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:rgba(160,220,255,.6)}
+</style></head><body>
+<div id="map"></div>
+<div id="bar"><button id="sat" class="on">Satellite</button><button id="dark">Dark</button><button id="tilt">3D tilt</button><button id="here">Build here</button><button id="survey">Survey</button><button id="rows">Solar rows</button><button id="walk">Walk</button><button id="drone">Drone</button><button id="map2d">Map</button><span id="spd" style="align-self:center;font:13px sans-serif;color:#dfe;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:6px"></span></div>
+<div id="joy"><div id="knob"></div></div><div id="info">Walk (1), Drone (2), Map (3). W A S D or the joystick to move, Q and E to turn, R and F to tilt, Shift for fast. "Solar rows" stands up the real mapped panel rows (OpenStreetMap) in 3D. "Build here" drops a 3D wireframe solar block at the map centre, fixed in real coordinates. "Survey" shows the onsite ground grid (LiDAR topography plugs in here).</div>
+<script>
+// Proof: GridAtlas is the ground (its satellite and dark basemaps, its grid layers), and the 3D wireframe is drawn
+// INSIDE the map's own camera as a custom WebGL layer, so it stays fixed to real coordinates when the map
+// pans, zooms, tilts or rotates. Positions are in metres around a local origin, turned into Mercator units
+// with the map's own scale at that latitude.
+const SAT = { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 17, attribution: 'Imagery: Esri, Maxar, Earthstar Geographics · Rows © OpenStreetMap contributors, ODbL' };
+const GA = 'https://ventusltd.github.io/gridatlas/atlas/releases/202608300453-atlas-v9/data';
+const FADE = { 'raster-opacity': 1 };
+const DEM = { type: 'raster-dem', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'], tileSize: 256, encoding: 'terrarium', maxzoom: 15, attribution: 'Terrain: AWS Terrain Tiles (open)' };
+const DARK = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const q = new URLSearchParams(location.search);
+const start = [Number(q.get('lon') ?? -1.78), Number(q.get('lat') ?? 51.215)];
+const map = new maplibregl.Map({ container: 'map', center: start, zoom: 15, pitch: 55, bearing: -20, maxPitch: 85, maxZoom: 20,
+  style: { version: 8, sources: { sat: SAT }, layers: [{ id: 'sat', type: 'raster', source: 'sat', paint: FADE }] }, antialias: true });
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
+
+const GRID = [['400', '#0054ff', 3], ['275', '#ff0000', 2.5], ['132', '#00b050', 2]];
+function addGrid() {
+  for (const [kv, color, w] of GRID) {
+    if (map.getSource('g' + kv)) continue;
+    map.addSource('g' + kv, { type: 'geojson', data: `${GA}/grid_${kv}kv.geojson` });
+    map.addLayer({ id: 'g' + kv, type: 'line', source: 'g' + kv, paint: { 'line-color': color, 'line-width': w, 'line-opacity': 0.9 } });
+  }
+  if (!map.getSource('subs')) {
+    map.addSource('subs', { type: 'geojson', data: `${GA}/grid_substations.geojson` });
+    map.addLayer({ id: 'subs', type: 'circle', source: 'subs', paint: { 'circle-radius': 5, 'circle-color': '#ffd400', 'circle-stroke-color': '#000', 'circle-stroke-width': 1 } });
+  }
+  if (!map.getLayer('wire')) map.addLayer(wire);
+}
+
+// The 3D wireframe layer: blocks of lines, each in local metres around its own lon/lat anchor.
+const blocks = [];
+function block(lon, lat) {
+  // A 200 m x 120 m solar block: table rows every 10 m, 2.5 m tall at the back, plus a compound cube.
+  const L = [], row = (x0, x1, y, h) => { L.push([x0, y, 0, x1, y, 0], [x0, y, 0, x0, y + 4, h], [x1, y, 0, x1, y + 4, h], [x0, y + 4, h, x1, y + 4, h]); };
+  for (let y = -60; y <= 56; y += 10) row(-100, 100, y, 2.5);
+  const c = (x, y, s, h) => { const p = [[x, y], [x + s, y], [x + s, y + s], [x, y + s]]; for (let i = 0; i < 4; i++) { const a = p[i], b = p[(i + 1) % 4]; L.push([a[0], a[1], 0, b[0], b[1], 0], [a[0], a[1], h, b[0], b[1], h], [a[0], a[1], 0, a[0], a[1], h]); } };
+  c(110, -10, 20, 6);
+  blocks.push({ lon, lat, lines: L });
+  map.triggerRepaint();
+}
+const wire = {
+  id: 'wire', type: 'custom', renderingMode: '3d',
+  onAdd(m, gl) {
+    const vs = `uniform mat4 u; attribute vec3 p; void main(){ gl_Position = u * vec4(p, 1.0); }`;
+    const fs = `precision mediump float; void main(){ gl_FragColor = vec4(0.55, 0.9, 1.0, 1.0); }`;
+    const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+    this.pr = gl.createProgram(); gl.attachShader(this.pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(this.pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(this.pr);
+    this.buf = gl.createBuffer();
+  },
+  render(gl, args) {
+    const m = args.defaultProjectionData?.mainMatrix || args;
+    gl.useProgram(this.pr);
+    for (const b of blocks) {
+      const gz = (map.queryTerrainElevation && map.queryTerrainElevation([b.lon, b.lat])) || 0; const o = maplibregl.MercatorCoordinate.fromLngLat([b.lon, b.lat], gz), s = o.meterInMercatorCoordinateUnits();
+      const v = new Float32Array(b.lines.flatMap(([x0, y0, z0, x1, y1, z1]) => [o.x + x0 * s, o.y - y0 * s, o.z + z0 * s, o.x + x1 * s, o.y - y1 * s, o.z + z1 * s]));
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.buf); gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW);
+      const loc = gl.getAttribLocation(this.pr, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+      gl.uniformMatrix4fv(gl.getUniformLocation(this.pr, 'u'), false, m);
+      gl.drawArrays(gl.LINES, 0, v.length / 3);
+    }
+  }
+};
+// Zoomed in: a wireframe ground of 10 m squares, 600 m across, anchored at a fixed 100 m national-style
+// lattice so it never swims as you move (drawn in real metres; LiDAR heights plug in here next).
+let groundKey = '', survey = false;
+function ground() {
+  const z = map.getZoom(); const i = blocks.findIndex(b => b.ground);
+  if (!survey || z < 16.5) { if (i >= 0) { blocks.splice(i, 1); groundKey = ''; map.triggerRepaint(); } return; }
+  const c = map.getCenter(), m = 111320, lat0 = Math.round(c.lat * m / 100) * 100 / m, lon0 = Math.round(c.lng * m * Math.cos(c.lat * Math.PI / 180) / 100) * 100 / (m * Math.cos(c.lat * Math.PI / 180));
+  const key = lon0.toFixed(6) + ',' + lat0.toFixed(6); if (key === groundKey) return; groundKey = key;
+  const L = []; for (let k = -300; k <= 300; k += 10) { L.push([-300, k, 0.2, 300, k, 0.2], [k, -300, 0.2, k, 300, 0.2]); }
+  if (i >= 0) blocks.splice(i, 1); blocks.unshift({ lon: lon0, lat: lat0, lines: L, ground: true }); map.triggerRepaint();
+}
+
+// ---- Walk and fly over the real map: fast, virtual movement (owner). ----
+const MODES = { walk: { pitch: 80, zoom: 18.5, speed: 10 }, drone: { pitch: 60, zoom: 16.5, speed: 60 }, map: { pitch: 0, zoom: 14, speed: 300 } };
+let mode = 'map', boost = 1; const keys = new Set(), joy = { x: 0, y: 0 };
+function setMode(m) { mode = m; const c = MODES[m]; map.easeTo({ pitch: c.pitch, zoom: c.zoom, duration: 900 });
+  for (const b of ['walk', 'drone', 'map2d']) document.getElementById(b).classList.toggle('on', b === (m === 'map' ? 'map2d' : m)); }
+document.getElementById('walk').onclick = () => setMode('walk');
+document.getElementById('drone').onclick = () => setMode('drone');
+document.getElementById('map2d').onclick = () => setMode('map');
+addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; keys.add(e.key.toLowerCase()); if (e.key === 'Shift') boost = 3;
+  if (e.key === '1') setMode('walk'); if (e.key === '2') setMode('drone'); if (e.key === '3') setMode('map'); });
+addEventListener('keyup', e => { keys.delete(e.key.toLowerCase()); if (e.key === 'Shift') boost = 1; });
+const joyEl = document.getElementById('joy'), knob = document.getElementById('knob');
+function joyAt(e) { const r = joyEl.getBoundingClientRect(); let x = (e.clientX - r.left - 60) / 50, y = (e.clientY - r.top - 60) / 50; const d = Math.hypot(x, y); if (d > 1) { x /= d; y /= d; }
+  joy.x = x; joy.y = y; knob.style.left = (40 + x * 40) + 'px'; knob.style.top = (40 + y * 40) + 'px'; }
+joyEl.addEventListener('pointerdown', e => { joyEl.setPointerCapture(e.pointerId); joyAt(e); });
+joyEl.addEventListener('pointermove', e => { if (e.buttons) joyAt(e); });
+joyEl.addEventListener('pointerup', () => { joy.x = joy.y = 0; knob.style.left = knob.style.top = '40px'; });
+let last = performance.now();
+function tick(t) {
+  const dt = Math.min(0.1, (t - last) / 1000); last = t;
+  const f = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) - joy.y;
+  const r = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0);
+  const turn = (keys.has('e') || keys.has('arrowright') ? 1 : 0) - (keys.has('q') || keys.has('arrowleft') ? 1 : 0) + joy.x;
+  const tilt = (keys.has('r') ? 1 : 0) - (keys.has('f') ? 1 : 0);
+  if (f || r || turn || tilt) {
+    const sp = MODES[mode].speed * boost, b = map.getBearing() * Math.PI / 180, c = map.getCenter();
+    const dn = (f * Math.cos(b) - r * Math.sin(b)) * sp * dt, de = (f * Math.sin(b) + r * Math.cos(b)) * sp * dt;
+    const lat = c.lat + dn / 111320, lng = c.lng + de / (111320 * Math.cos(c.lat * Math.PI / 180));
+    map.jumpTo({ center: [lng, lat], bearing: map.getBearing() + turn * 60 * dt, pitch: Math.max(0, Math.min(85, map.getPitch() + tilt * 30 * dt)) });
+  }
+  document.getElementById('spd').textContent = `${mode} · ${Math.round(MODES[mode].speed * boost)} m/s · ${(MODES[mode].speed * boost * 3.6).toFixed(0)} km/h`;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+
+// ---- Real solar rows from OpenStreetMap (ODbL), stood up as 3D wireframe tables on the map. ----
+// One polite Overpass request per press, for the area in view. Each mapped panel outline becomes a table:
+// its outline at 1 m, a top edge at 2.6 m on the northern side, and legs at the corners. No names shown.
+const M_LAT = 111320;
+async function loadRows() {
+  const bt = document.getElementById('rows'); bt.textContent = 'Loading rows...';
+  const b = map.getBounds(), bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v => v.toFixed(5)).join(',');
+  const q = `[out:json][timeout:25];(way["power"="generator"]["generator:source"="solar"](${bbox});way["generator:method"="photovoltaic"](${bbox});way["power"="plant"]["plant:source"="solar"](${bbox}););out geom 4000;`;
+  try {
+    const r = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q) });
+    const j = await r.json(); let n = 0;
+    for (const w of j.elements || []) {
+      const g = w.geometry; if (!g || g.length < 3) continue;
+      const plant = w.tags && w.tags.power === 'plant';
+      const lat0 = g[0].lat, lon0 = g[0].lon, k = M_LAT * Math.cos(lat0 * Math.PI / 180);
+      const P = g.map(p => [(p.lon - lon0) * k, (p.lat - lat0) * M_LAT]);
+      const L = [];
+      if (plant) { for (let i = 0; i + 1 < P.length; i++) L.push([P[i][0], P[i][1], 0.3, P[i + 1][0], P[i + 1][1], 0.3]); }
+      else {
+        let yMax = -1e9, yMin = 1e9; for (const p of P) { yMax = Math.max(yMax, p[1]); yMin = Math.min(yMin, p[1]); }
+        const h = y => 1.0 + 1.6 * (y - yMin) / Math.max(0.5, yMax - yMin);   // higher at the north (back) edge
+        for (let i = 0; i + 1 < P.length; i++) { const a = P[i], c = P[i + 1]; L.push([a[0], a[1], h(a[1]), c[0], c[1], h(c[1])], [a[0], a[1], 0, a[0], a[1], h(a[1])]); }
+      }
+      blocks.push({ lon: lon0, lat: lat0, lines: L, plant }); n++;
+    }
+    bt.textContent = n ? `Solar rows (${n})` : 'No rows mapped here';
+    map.triggerRepaint();
+  } catch (e) { bt.textContent = 'Rows: try again'; }
+}
+document.getElementById('rows').onclick = loadRows;
+
+map.on('moveend', ground); map.on('zoomend', ground);
+map.on('load', () => { addGrid(); block(start[0], start[1]); ground(); });
+const on = id => { for (const b of ['sat', 'dark']) document.getElementById(b).classList.toggle('on', b === id); };
+document.getElementById('sat').onclick = () => { map.setStyle({ version: 8, sources: { sat: SAT }, layers: [{ id: 'sat', type: 'raster', source: 'sat', paint: FADE }] }); on('sat'); };
+document.getElementById('dark').onclick = () => { map.setStyle(DARK); on('dark'); };
+map.on('style.load', () => { addGrid(); if (!map.getSource('dem')) map.addSource('dem', DEM); map.setTerrain({ source: 'dem', exaggeration: 1 }); });
+document.getElementById('tilt').onclick = () => map.easeTo({ pitch: map.getPitch() > 10 ? 0 : 60, duration: 800 });
+document.getElementById('survey').onclick = e => { survey = !survey; e.target.classList.toggle('on', survey); groundKey = ''; ground(); };
+document.getElementById('here').onclick = () => { const c = map.getCenter(); block(c.lng, c.lat); };
+</script></body></html>
