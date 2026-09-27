@@ -1,0 +1,16 @@
+{
+ "ref": "SYNTHETIC",
+ "register_point": [-1.5, 52.0],
+ "section": {
+  "duct_od_m": {"value": 0.0965, "source": "fixture"},
+  "gap_m": {"value": 0.1, "source": "fixture"},
+  "margin_m": {"value": 0.1, "source": "fixture"},
+  "bed_m": {"value": 0.05, "source": "fixture"},
+  "depth_m": {"value": 0.9, "source": "fixture"}
+ },
+ "cover_m": {"value": 0.67, "reference_m": 0.91},
+ "nodes": [[-1.5, 52.0], [-1.4985, 52.0], [-1.4985, 52.0009]],
+ "edges": [[0, 1], [1, 2]],
+ "bunds": [{"id": "X1", "centre": [-1.4984, 52.0010], "wall": [[-1.49848, 52.00095], [-1.49832, 52.00095], [-1.49832, 52.00105], [-1.49848, 52.00105]], "size_m": [11, 11], "rot_deg": 0, "face_names": ["S", "E", "N", "W"]}],
+ "designs": {"T": {"label": "fixture", "inverters": [], "variants": {"1": {"label": "one face", "counts": [[0, 14], [1, 28]], "totals": {}, "checks": {}}}}}
+}
