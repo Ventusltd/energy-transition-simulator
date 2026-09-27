@@ -28,7 +28,8 @@
     const t = current && tiles.get(current), P = PF();
     if (!t) { panel().textContent = 'Measured ground (R5): arrive somewhere to stream its 2,048 m tile.'; return; }
     const eng = P && P.engine ? P.engine : (t.engine || '');
-    const L = [`Measured ground, tile ${t.tile.e0} E ${t.tile.n0} N (2,048 m, EPSG:27700): ${t.status}`];
+    const L = t.arrived ? [t.arrived] : [];
+    L.push(`Measured ground, tile ${t.tile.e0} E ${t.tile.n0} N (2,048 m, EPSG:27700): ${t.status}`);
     for (const k of ['dtm', 'dsm']) {
       const r = t[k];
       if (!r) continue;
@@ -142,8 +143,9 @@
     if (!tiles.has(tile.key)) tiles.set(tile.key, { tile, dtm: null, dsm: null, status: `arrived (${why})` });
     const t = tiles.get(tile.key);
     if (!R5.clip(tile, R5.SOURCES.dtm.env)) { t.dtm = { none: 'outside the EA LiDAR envelope (England only)' }; t.status = 'no measured ground here'; }
-    S.info(`Arrived (${why}): measured ground for tile ${tile.e0} E ${tile.n0} N streams here; moving never fetches.`);
-    step(); return tile;
+    // The arrival line lives only in this module's own receipt panel; #info (the landing caption) is never touched.
+    t.arrived = `Arrived (${why}): measured ground for tile ${tile.e0} E ${tile.n0} N streams here; moving never fetches.`;
+    show(); step(); return tile;
   }
 
   wait(async () => {

@@ -98,6 +98,11 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   const rc2 = await p.evaluate(() => window.__lidarStream.receipt());
   check('outside coverage says "no measured ground here", no request', /no measured ground here/.test(rc2) && ea.length === n0, rc2.slice(0, 160));
   await p.screenshot({ path: path.join(OUT, 'stream-3-outside.png') });
+  // The landing caption (#info) belongs to the overlay; arrival text goes only to this module's receipt panel.
+  const inf0 = await p.evaluate(() => (document.getElementById('info') || {}).textContent);
+  await p.evaluate(() => window.__lidarStream.arrive('check')); await p.waitForTimeout(300);
+  const inf1 = await p.evaluate(() => (document.getElementById('info') || {}).textContent), rc3 = await p.evaluate(() => window.__lidarStream.receipt());
+  check('#info unchanged by arrive(); arrival line is the receipt panel first line', inf0 != null && inf1 === inf0 && /^Arrived \(check\): measured ground for tile \d+ E \d+ N streams here; moving never fetches\./.test(rc3) && ea.length === n0, `info "${String(inf1).slice(0, 60)}" | receipt "${rc3.split('\n')[0].slice(0, 90)}"`);
   check('no page errors', errs.length === 0, errs.join(' | ') || 'none');
   await b.close(); server.close();
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}  -- ${r.evidence}`);
