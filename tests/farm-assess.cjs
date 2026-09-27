@@ -178,4 +178,42 @@ T('(gref8) LAND line head: grid ref of the centred box, tagged [derived]; still 
 T('(gref8) negative: a box outside the lettered grid falls back to km and says so, never a letter pair', () => {
   const h = A.landHead({ e0: -2048, n0: 300000, e1: 0, n1: 302048 }); return [A.isFarmText(h) && /km BNG \[derived, box centre; outside the lettered OS grid\]/.test(h) && !/[A-Z]{2} \d/.test(h), h]; });
 
+// 14. Round 9: SLOPE of the site box from an already-streamed R5 DTM tile (lidar-stream's decoded form). No network.
+// geo in the decoder's form: rows north to south, west/north = the tile's NW corner, res = cell size (m).
+const dtmTile = (e0, n0, size, res, fn, holes) => { const w = size / res, h = w, data = new Float32Array(w * h), mask = new Uint8Array(w * h);
+  for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) { const e = e0 + (c + 0.5) * res, n = n0 + size - (r + 0.5) * res; data[r * w + c] = fn(e, n); mask[r * w + c] = holes && holes(e, n) ? 0 : 1; }
+  return { geo: { data, width: w, height: h, west: e0, north: n0 + size, res }, mask, src: { product: 'LIDAR Composite DTM 1 m' }, sha: 'abcdef0123456789' }; };
+const bx9 = A.centredBox(520900, 333800);                                   // c520960_333824: E 519936-521984, N 332800-334848
+const tan = d => Math.tan(d * Math.PI / 180);
+T('(slope9) synthetic plane of 7.0 deg rising to the NE gives 100% in the 5-10 deg band; 3.0 deg gives 100% under 5; 14.0 deg gives 100% over 10', () => {
+  const out = [7, 3, 14].map(deg => { const g = tan(deg) / Math.SQRT2;   // equal E and N components; magnitude tan(deg)
+    const t = dtmTile(519000, 332000, 4096, 4, (e, n) => 10 + g * (e - 519000) + g * (n - 332000));
+    const sl = A.slopeBands([t], bx9); return sl.bands.map(x => x.share); });
+  return [near(out[0][1], 1, 1e-12) && near(out[1][0], 1, 1e-12) && near(out[2][2], 1, 1e-12), JSON.stringify(out)]; });
+T('(slope9) a flat tile gives 100% under 5 deg over the whole 419 ha box, tagged [derived from Environment Agency LIDAR Composite DTM 1 m, OGL v3.0], licence and attribution named', () => {
+  const sl = A.slopeBands([dtmTile(519000, 332000, 4096, 1, () => 4.2)], bx9), d = A.slopeText(sl, false), ph = A.slopeText(sl, true), cr = A.slopeCredit(sl);
+  return [near(sl.bands[0].share, 1, 1e-12) && near(sl.assessedHa, 419.4304, 1e-6) && sl.bands[1].ha === 0 && sl.bands[2].ha === 0
+    && /under 5° 100\.0% \(419 ha\)/.test(d) && d.indexOf('[derived from Environment Agency LIDAR Composite DTM 1 m, OGL v3.0]') > 0 && /^SLOPE: <5° 100\.0%/.test(ph)
+    && /Open Government Licence v3\.0\. Contains Environment Agency information © Environment Agency and database right\./.test(cr) && /receipt abcdef012345/.test(cr), d + ' || ' + ph + ' || ' + cr]; });
+T('(slope9) a missing tile gives "slope not assessed (no DTM tile loaded)" and no value, on desktop and phone', () => {
+  const a = A.slopeBands([], bx9), c = A.slopeBands(undefined, bx9), d = A.slopeBands([{ none: 'outside the service envelope' }], bx9);
+  const t = A.slopeText(a, false), tp = A.slopeText(null, true);
+  return [a === null && c === null && d === null && t === 'SLOPE: slope not assessed (no DTM tile loaded).' && tp === t && A.slopeCredit(null) === '' && !/\d/.test(t), t]; });
+T('(slope9) bands split by area: W part flat, middle 8 deg, E part 15 deg; only cells in the box count; shares are of the assessed part', () => {
+  // Tile E 520960-523008, N 333824-335872 overlaps the box in E 520960-521984, N 333824-334848. Its W column and S row are
+  // tile edges (no west/south neighbour), so 1023 x 1023 cells are assessable. The kinks at x1, x2 move at most one column.
+  const s8 = tan(8), s15 = tan(15), x1 = 521300, x2 = 521700;
+  const z = e => e < x1 ? 0 : e < x2 ? (e - x1) * s8 : (x2 - x1) * s8 + (e - x2) * s15;
+  const sl = A.slopeBands([dtmTile(520960, 333824, 2048, 1, e => z(e))], bx9), H = sl.bands.map(x => x.ha * 1e4);
+  const rows = 1023, flat = (x1 - 520961) * rows, mid = (x2 - x1) * rows, steep = (521984 - x2) * rows;
+  return [near(sl.assessedHa, 1023 * 1023 / 1e4, 1e-9) && Math.abs(H[0] - flat) <= rows && Math.abs(H[1] - mid) <= rows && Math.abs(H[2] - steep) <= rows
+    && near(sl.bands.reduce((s, x) => s + x.share, 0), 1, 1e-12) && near(sl.cover, 1023 * 1023 / (2048 * 2048), 1e-12), JSON.stringify(H) + ' vs ' + [flat, mid, steep]]; });
+T('(slope9) holes: unmeasured cells and their 4 neighbours are not assessed (never 0 m)', () => {
+  const t = dtmTile(519000, 332000, 4096, 1, () => 0, (e, n) => e > 521000 && e < 521100 && n > 333000 && n < 333100);
+  const sl = A.slopeBands([t], bx9);
+  return [near(sl.assessedHa * 1e4, 2048 * 2048 - 100 * 100 - 4 * 100, 1e-6) && sl.bands[0].share === 1, sl.assessedHa]; });
+T('(gref9) gridRef digits=0 gives null (was 8 figures via digits||8); omitted still gives 8; 6 gives 6', () => {
+  const z = A.gridRef(520960, 333824, 0), u = A.gridRef(520960, 333824), n6 = A.gridRef(520960, 333824, 6);
+  return [z === null && u === 'TF 2096 3382' && n6 === 'TF 209 338', [z, u, n6].join(' | ')]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

@@ -19,6 +19,7 @@
 // service-level query per assess (both layers in one envelope request), cached by the same c<e>_<n> key, at least 40 s
 // between EA requests, never on move. The share of the box in each zone layer is DERIVED; the layers can overlap, so the
 // two shares are per layer and are not added. Planning flood zones, not a site flood risk assessment.
+// Round 9: SLOPE line from the R5 DTM tile the stream module already streamed (see slopeBands); never fetches heights.
 // Commands: button "Assess land", or type "assess here" (own box, or the find box). ?assess=1 assesses on arrival.
 (function (root) {
   'use strict';
@@ -182,7 +183,7 @@
   // the OS convention says (the reference names the square the point lies in). Outside the grid (0-700 km E, 0-1300 km N)
   // or not a number: null, never a wrong square.
   function gridRef(e, n, digits) {
-    var d = digits || 8; if (d % 2 || d < 2 || d > 10) return null;
+    var d = digits === undefined ? 8 : digits; if (d % 2 || d < 2 || d > 10) return null;
     if (typeof e !== 'number' || typeof n !== 'number' || !isFinite(e) || !isFinite(n) || e < 0 || n < 0 || e >= 700000 || n >= 1300000) return null;
     var e1 = Math.floor(e / 100000), n1 = Math.floor(n / 100000);
     var l1 = (19 - n1) - (19 - n1) % 5 + Math.floor((e1 + 10) / 5), l2 = (19 - n1) * 5 % 25 + e1 % 5;
@@ -193,13 +194,53 @@
   // First words of the LAND line. The box centre's 8-figure reference (10 m square) is DERIVED from the snapped box.
   function landHead(b) { var ce = (b.e0 + b.e1) / 2, cn = (b.n0 + b.n1) / 2, g = gridRef(ce, cn, 8);
     return 'LAND: site box ' + (g ? g + ' [derived, box centre, OS grid ref]' : (ce / 1000) + ',' + (cn / 1000) + ' km BNG [derived, box centre; outside the lettered OS grid]'); }
+  // Round 9: SLOPE of the site box, from the R5 DTM tile(s) the stream module has ALREADY streamed (lane stream,
+  // window.__lidarStream.tiles, keyed e0_n0 on the 2,048 m lattice). This module never fetches heights. Slope per 1 m
+  // cell by central differences on its four measured neighbours: atan(hypot(dz/de, dz/dn)). Cells without four measured
+  // neighbours (tile edges, holes) are not assessed. Only cells whose centre lies in the box count, so the share is of
+  // the ASSESSED part of the box, and the text says how many hectares of the box that is (often one tile of up to four).
+  // Bands: under 5 deg (s < 5), 5 to 10 deg (5 <= s <= 10), over 10 deg (s > 10). Bare-earth terrain, not crops or hedges.
+  var DTM = { by: 'Environment Agency', product: 'LIDAR Composite DTM 1 m', licence: 'Open Government Licence v3.0',
+    attribution: 'Contains Environment Agency information © Environment Agency and database right.' };
+  var SLOPE_NONE = 'slope not assessed (no DTM tile loaded)';
+  // dtms: [{ geo:{data (rows north to south), width, height, west, north, res}, mask, src?, sha? }] from lidar-stream.
+  function slopeBands(dtms, b) {
+    var boxA = (b.e1 - b.e0) * (b.n1 - b.n0), cnt = [0, 0, 0], area = [0, 0, 0], res = null, used = [];
+    (dtms || []).forEach(function (t) {
+      var g = t && t.geo, m = t && t.mask; if (!g || !m || !g.data || !(g.res > 0)) return;
+      var w = g.width, h = g.height, r0 = g.res, cellA = r0 * r0, n = 0;
+      var c0 = Math.max(1, Math.ceil((b.e0 - g.west) / r0 - 0.5)), c1 = Math.min(w - 2, Math.floor((b.e1 - g.west) / r0 - 0.5 - 1e-9));
+      var q0 = Math.max(1, Math.ceil((g.north - b.n1) / r0 - 0.5)), q1 = Math.min(h - 2, Math.floor((g.north - b.n0) / r0 - 0.5 - 1e-9));
+      for (var r = q0; r <= q1; r++) for (var c = c0; c <= c1; c++) {
+        var k = r * w + c; if (!m[k] || !m[k - 1] || !m[k + 1] || !m[k - w] || !m[k + w]) continue;
+        var gx = (g.data[k + 1] - g.data[k - 1]) / (2 * r0), gy = (g.data[k - w] - g.data[k + w]) / (2 * r0);
+        var s = Math.atan(Math.sqrt(gx * gx + gy * gy)) / D, i = s < 5 ? 0 : s <= 10 ? 1 : 2;
+        cnt[i]++; area[i] += cellA; n++; }
+      if (n) { res = res == null ? r0 : res; used.push(t); } });
+    var tot = area[0] + area[1] + area[2]; if (!tot) return null;
+    return { boxHa: boxA / 1e4, assessedHa: tot / 1e4, cover: tot / boxA, res: res, tiles: used.length,
+      sha: used.map(function (t) { return t.sha ? String(t.sha).slice(0, 12) : ''; }).filter(Boolean),
+      product: (used[0].src && used[0].src.product) || DTM.product,
+      bands: [['under 5°', area[0]], ['5-10°', area[1]], ['over 10°', area[2]]].map(function (x) { return { band: x[0], ha: x[1] / 1e4, share: x[1] / tot }; }) };
+  }
+  function slopeTag(sl) { return '[derived from ' + DTM.by + ' ' + sl.product.replace(/( DTM)? [0-9.]+ ?m$/, '') + ' DTM ' + sl.res + ' m, OGL v3.0]'; }
+  // The SLOPE line, one place. No tile: says so and shows no value.
+  function slopeText(sl, phone) {
+    if (!sl) return 'SLOPE: ' + SLOPE_NONE + '.';
+    var f = function (x) { return (100 * x.share).toFixed(1) + '%' + (phone ? '' : ' (' + x.ha.toFixed(0) + ' ha)'); };
+    var cov = sl.assessedHa.toFixed(0) + ' of ' + sl.boxHa.toFixed(0) + ' ha';
+    if (phone) return 'SLOPE: <5° ' + f(sl.bands[0]) + ', 5-10° ' + f(sl.bands[1]) + ', >10° ' + f(sl.bands[2]) + ' ' + slopeTag(sl) + '; over ' + cov + ' of box.';
+    return 'SLOPE (share of the ' + cov + ' of the box covered by the streamed DTM): under 5° ' + f(sl.bands[0]) + '; 5 to 10° ' + f(sl.bands[1]) + '; over 10° ' + f(sl.bands[2]) + ' '
+      + slopeTag(sl) + '. Bare-earth ground, 1 cell central differences; survey year not read.';
+  }
+  function slopeCredit(sl) { return sl ? 'Slope source: ' + DTM.by + ', ' + sl.product + (sl.sha.length ? ' (receipt ' + sl.sha.join(', ') + ')' : '') + '. ' + DTM.licence + '. ' + DTM.attribution : ''; }
   var INFO_KEYS = ['whiteSpace', 'bottom', 'maxHeight', 'overflowY', 'maxWidth', 'boxSizing', 'zIndex', 'background'], FARM_HEAD = 'LAND: site box';
   function snapInfo(el) { var st = {}; INFO_KEYS.forEach(function (k) { st[k] = el.style[k]; }); return { style: st, lift: el.classList.contains('fa-lift') }; }
   function isFarmText(t) { return String(t || '').indexOf(FARM_HEAD) === 0; }
   function restoreInfo(prev, el) { INFO_KEYS.forEach(function (k) { el.style[k] = prev.style[k]; }); if (!prev.lift) el.classList.remove('fa-lift'); }
   // Called on each #info mutation while the farmer result is lifted. Returns true when it restored (the watch is then over).
   function infoChanged(prev, el) { if (!prev || isFarmText(el.textContent)) return false; restoreInfo(prev, el); return true; }
-  var core = { gridRef: gridRef, landHead: landHead, INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
+  var core = { DTM: DTM, SLOPE_NONE: SLOPE_NONE, slopeBands: slopeBands, slopeText: slopeText, slopeCredit: slopeCredit, gridRef: gridRef, landHead: landHead, INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
@@ -286,24 +327,35 @@
     });
     SIM.addBlock({ lon: an.lon, lat: an.lat, anchor: an, lines: L, buf: P.wireBuffer(an, L), farmAssess: true });
   }
+  // Tiles the stream module already holds for this box, by its fixed e0_n0 lattice key. Never fetches.
+  function streamedDtms(b) {
+    var LS = root.__lidarStream, out = []; if (!LS || !LS.tiles || typeof LS.tiles.get !== 'function') return out;
+    for (var e = Math.floor(b.e0 / TILE) * TILE; e < b.e1; e += TILE) for (var n = Math.floor(b.n0 / TILE) * TILE; n < b.n1; n += TILE) {
+      var t = LS.tiles.get(e + '_' + n); if (t && t.dtm && t.dtm.geo && t.dtm.mask) out.push(t.dtm); }
+    return out;
+  }
   function report(b, rec, res, sub, c, fz, fzErr) {
+    var sl = slopeBands(streamedDtms(b), b);
     var pct = function (x) { return (100 * x).toFixed(1) + '%'; };
     var lines = [landHead(b) + ' (2,048 m, centred on arrival, edges on 256 m BNG grid, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
     res.rows.forEach(function (r) { lines.push('  ' + r.grade + ': ' + pct(r.share) + ' (' + r.ha.toFixed(0) + ' ha) [derived]'); });
     lines.push(grade3Text(res, false) + (res.grade3Share > 0 ? '' : ' Not a field survey.'));
     if (rec.exceeded) lines.push('  WARNING: service transfer limit hit; shares are incomplete.');
+    lines.push(slopeText(sl, false));
     lines.push(floodText(fz, false, fzErr));
     lines.push(gridText(sub, false));
     if (fz) lines.push('Flood source: ' + FZ.by + ', ' + FZ.name + ' (' + FZ.date + '). ' + FZ.licence + '. ' + FZ.attribution + ' One query, ' + fz.ms + ' ms, ' + fz.at.slice(0, 19) + 'Z.');
+    if (sl) lines.push(slopeCredit(sl));
     lines.push('Source: ' + SRC.by + ', ' + SRC.name + '. ' + SRC.licence + '. ' + SRC.attribution + ' One query, ' + rec.ms + ' ms, ' + rec.at.slice(0, 19) + 'Z.');
     var cb = PF().toBng(c[1], c[0]);
     root.__farmAssess = { box: b, centreBng: { e: cb.e, n: cb.n }, edgeMarginM: edgeMargin(b, cb.e, cb.n), rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at,
       flood: fz ? { fz3: { ha: fz.fz3.ha, share: fz.fz3.share }, fz2: { ha: fz.fz2.ha, share: fz.fz2.share }, exceeded: fz.exceeded, fetchedAt: fz.at, ms: fz.ms } : null,
-      floodError: fz ? null : (fzErr || 'no answer'), floodLine: floodText(fz, innerWidth < 600, fzErr) };
+      floodError: fz ? null : (fzErr || 'no answer'), floodLine: floodText(fz, innerWidth < 600, fzErr),
+      slope: sl ? { bands: sl.bands, assessedHa: sl.assessedHa, cover: sl.cover, res: sl.res, tiles: sl.tiles, sha: sl.sha } : null, slopeLine: slopeText(sl, innerWidth < 600) };
     if (innerWidth < 600) lines = [lines[0].replace(' [derived, box centre, OS grid ref]', ' [derived]').replace(' (2,048 m, centred on arrival, edges on 256 m BNG grid, ', ' (centred on arrival, ').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
-        [grade3Text(res, true), floodText(fz, true, fzErr), gridText(sub, true),
-         'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '')]);
+        [grade3Text(res, true), slopeText(sl, true), floodText(fz, true, fzErr), gridText(sub, true),
+         'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '') + (sl ? ' EA LiDAR DTM, OGL v3.0, © EA and database right.' : '')]);
     var el = document.getElementById('info');
     if (el && !infoPrev) infoPrev = snapInfo(el);   // first farmer result since the last restore: record the originals
     SIM.info(lines.join('\n')); if (el) { el.style.whiteSpace = 'pre-wrap'; el.classList.add('fa-lift'); el.scrollTop = 0; layoutPanel(); watchInfo(el); }
