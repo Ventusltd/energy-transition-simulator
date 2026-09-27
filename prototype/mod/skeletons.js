@@ -39,14 +39,16 @@
     return n;
   }
 
+  const msgTitle = d => `${d.info} Provenance: ${d.provenance}.`;
   function toggle() {
     if (on) { clear(); on = false; btn.classList.remove('on'); btn.textContent = 'Skeletons'; SIM.info('Skeletons removed.'); return; }
     load().then(d => {
       clear();
-      const n = draw(d); on = true; btn.classList.add('on'); btn.textContent = `Skeletons (${n})`;
+      const n = draw(d); on = true; btn.classList.add('on'); btn.textContent = `Skeletons (${n}, illustrative)`; btn.title = msgTitle(d);
       const parts = d.objects.map(o => `${o.id} ${o.n_lines}`).join(', ');
-      SIM.info(`${d.info} ${n} lines (${parts}) at the map centre; ground taken as flat. Provenance: ${d.provenance}; scanner commit ${String(d.source.commit || 'unknown').slice(0, 7)}.`);
-      window.__skeletons = { lines: n, expected: d.n_lines, objects: d.objects.map(o => ({ id: o.id, n: o.n_lines, provenance: o.provenance })) };
+      const msg = `${d.info} ${n} lines (${parts}) at the map centre; ground taken as flat. Provenance: ${d.provenance}; scanner commit ${String(d.source.commit || 'unknown').slice(0, 7)}.`;
+      SIM.info(msg);
+      window.__skeletons = { lines: n, expected: d.n_lines, info: msg, objects: d.objects.map(o => ({ id: o.id, n: o.n_lines, provenance: o.provenance })) };
     }).catch(e => SIM.info('Skeletons: the data did not load (' + e.message + ')'));
   }
 })();

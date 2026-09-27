@@ -47,7 +47,7 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
   const got = await p.evaluate(() => {
     const bl = window.SIM.blocks.filter(x => x.skeleton);
     return { blocks: bl.length, lines: bl.reduce((t, x) => t + x.lines.length, 0), verts: bl.reduce((t, x) => t + x.buf.length / 3, 0),
-      ids: bl.map(x => x.skeleton), info: document.getElementById('info').textContent, label: document.getElementById('skeletons').textContent };
+      ids: bl.map(x => x.skeleton), info: (window.__skeletons && window.__skeletons.info) || '', label: document.getElementById('skeletons').textContent };
   });
   check('skeleton blocks drawn (tower, pylon, solar)', got.blocks === DATA.objects.length && got.ids.join() === DATA.objects.map(o => o.id).join(), `${got.blocks} blocks: ${got.ids.join(', ')}`);
   check('line count > 0 and equals the JSON', got.lines > 0 && got.lines === DATA.n_lines, `drawn ${got.lines}, JSON ${DATA.n_lines}`);
