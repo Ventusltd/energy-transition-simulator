@@ -2,10 +2,12 @@
 // cables or ducts in their formation, the protection tile, and a cross-section panel (the X-ray). Every dimension
 // is typed or cited, never invented:
 //   - cited: a section of the engine's own catalogue (engine/data/trench-sections.json, each with its status and
-//     its source clause keyed in that file); "trench auto" picks the DNO reference section for the route's voltage
-//     and circuit count from connect-here;
+//     its source clause keyed in that file); "trench auto" picks the section for the route's voltage and circuit
+//     count from connect-here, at FARMLAND cover 0.91 m by default (land class assumed and labelled; "trench auto
+//     other" for other land). Catalogue status "typical" is shown as "estimated";
 //   - typed: "trench w 0.65 d 1.28 cover 0.9 od 160mm" (metres, or mm with the unit).
-// The check ("trench check", window.__trench.check()) reads the geometry BACK from the Float32 buffers the GPU
+// The CONSISTENCY check ("trench consistency" or "trench check", window.__trench.consistency()) reads the geometry
+// BACK from the Float32 buffers the GPU
 // draws (decoded through the page's place frame) and compares width, depth, cover, phase and circuit spacing with
 // the typed or cited values: every one must match within 1 cm. A second, independent path measures the width
 // through OSTN15 National Grid coordinates (corrected by the Transverse Mercator scale factor).
@@ -23,8 +25,14 @@
   const STEP = 5;                   // ground sampled every 5 m along the route
   const CHUNK = 100;                // one block per <= 100 m of route (float precision and terrain follow)
   const NCIRC = 12;                 // 12-gon cable / duct outlines (one vertex exactly at the top)
-  // "trench auto": the DNO reference sections of the catalogue, by voltage and circuits (cover for other land).
-  const AUTO = { 33: { 1: '33kv-1-dno', 2: '33kv-2' }, 132: { 1: '132kv-1-dno', 2: '132kv-2' } };
+  // "trench auto [farmland|other]": the catalogue section by land class, voltage and circuits.
+  // Farmland is the default (the connect-here route runs from a farm field); the land class is ASSUMED, not looked up,
+  // and is shown on the label. Farmland cover is 0.91 m (S1 Table 5.4.1, good agricultural land), the source the
+  // catalogue cites. The catalogue has farmland sections at 33 kV; at 132 kV it has only the 0.90 m section, so auto
+  // derives the farmland one from it: cover 0.91 m (cited), depth and tile lowered by the same 0.01 m (derived).
+  const AUTO = { farmland: { 33: { 1: '33kv-1-agri', 2: '33kv-2-agri' }, 132: { 1: '132kv-1-dno', 2: '132kv-2' } },
+                 other:    { 33: { 1: '33kv-1-dno',  2: '33kv-2' },      132: { 1: '132kv-1-dno', 2: '132kv-2' } } };
+  const FARM_COVER = 0.91, FARM_SRC = 'S1 Table 5.4.1 (good agricultural land 0.91 m)';
   const q = new URLSearchParams(location.search);
   const st = { sections: null, spec: null, route: null, connectRef: null, blocks: 0, ribs: [], xray: false, auto: false, last: null };
 
@@ -41,7 +49,7 @@
       return st.sections;
     }
     const WIDTH_TAG = src => { const m = /Width (assumed|derived|taken|scaled)/i.exec(src || ''); return !m ? 'assumed' : ({ assumed: 'assumed', derived: 'derived', taken: 'estimated', scaled: 'estimated' })[m[1].toLowerCase()]; };
-    const STATUS_TAG = { verified: 'cited', typical: 'derived', assumed: 'assumed' };
+    const STATUS_TAG = { verified: 'cited', typical: 'estimated', assumed: 'assumed' };   // typical = from project drawings or arithmetic: estimated
     // A catalogue section -> the spec the drawing uses. Only trefoil formations are drawn (the AC connection).
     function fromSection(s) {
       if (!/trefoil/i.test(s.formation || '')) throw Error(`section ${s.id}: only trefoil formations are drawn here (${s.formation})`);
@@ -233,12 +241,13 @@
       const items = [['width', s.w, 'w'], ['depth', s.d, 'd'], ['cover', s.cover, 'cover'], ['od', s.od, 'od']];
       if (s.circuits > 1) items.push(['cs', s.cs, 'cs']); if (s.tile) items.push(['tile', s.tile, 'tile']);
       for (const [k, v, p] of items) rows.push({ what: k, value_m: v, prov: s.prov[p], worst_err_m: worst[k], pass: pass(k) });
-      if (bngN) rows.push({ what: 'width via OSTN15 grid', value_m: s.w, prov: `independent path (${bngEngine})`, worst_err_m: worst.bng, pass: pass('bng'), n: bngN });
+      if (bngN) rows.push({ what: `width via National Grid (${bngEngine})`, value_m: s.w, prov: 'independent path', worst_err_m: worst.bng, pass: pass('bng'), n: bngN });
       const c = window.__connect, lenErr = c && Number.isFinite(c.route_m) ? Math.abs(st.length - c.route_m) : null;
       if (lenErr !== null) rows.push({ what: 'trench length vs connect-here route', value_m: c.route_m, prov: 'derived (connect-here)', worst_err_m: lenErr, pass: lenErr <= TOL });
       const ok = rows.every(r => r.pass);
-      const r = { ok, section: s.id, ribs: st.ribs.length, tolerance_m: TOL, rows,
-        text: `Trench check ${ok ? 'PASS' : 'FAIL'}: ${st.ribs.length} ribs of ${s.id}, read back from the drawn buffers. ` +
+      const r = { name: 'consistency', ok, section: s.id, land: s.land || null, land_prov: s.landProv || null, ribs: st.ribs.length, tolerance_m: TOL, rows,
+        text: `Trench consistency ${ok ? 'PASS' : 'FAIL'} (drawn = ${s.status === 'typed' ? 'typed' : 'catalogue'} values; not a site survey): ${st.ribs.length} ribs of ${s.id}` +
+          (s.land ? `, land ${s.land} (${s.landProv})` : '') + ', read back from the drawn buffers. ' +
           rows.map(x => `${x.what} ${x.value_m.toFixed(3)} m (${x.prov}) worst ${(x.worst_err_m * 1000).toFixed(2)} mm`).join('; ') + '. Tolerance 10 mm.' };
       st.last = r; return r;
     }
@@ -248,7 +257,7 @@
     panel.id = 'trench-panel';
     panel.style.cssText = 'position:absolute;right:8px;bottom:170px;z-index:3;width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 330px);overflow:auto;font:11px/1.4 ui-monospace,Consolas,monospace;color:#dfe;background:rgba(0,0,0,.8);border:1px solid rgba(160,220,255,.3);border-radius:6px;padding:6px 8px;display:none';
     panel.innerHTML = '<div id="trench-head"></div><svg id="trench-svg" width="100%" viewBox="0 0 340 200" style="display:block;background:#05080c;margin:4px 0"></svg><div id="trench-foot" style="white-space:pre-wrap"></div>'
-      + '<input id="trench-cmd" spellcheck="false" autocomplete="off" placeholder="trench auto | trench go | trench 132kv-1-dno | trench w 0.65 d 1.28 cover 0.9 od 160mm | trench check | xray off" style="width:100%;box-sizing:border-box;font:inherit;color:#fff;background:#000;border:1px solid #456;padding:4px 6px;margin-top:4px">';
+      + '<input id="trench-cmd" spellcheck="false" autocomplete="off" placeholder="trench auto | trench go | trench 132kv-1-dno | trench w 0.65 d 1.28 cover 0.9 od 160mm | trench consistency | trench auto other | xray off" style="width:100%;box-sizing:border-box;font:inherit;color:#fff;background:#000;border:1px solid #456;padding:4px 6px;margin-top:4px">';
     document.body.appendChild(panel);
     const $ = id => document.getElementById(id);
     function nearestRib() {
@@ -278,7 +287,8 @@
       const p = s.prov, od = s.ducted ? 'duct OD' : 'cable OD';
       $('trench-foot').textContent = `width ${s.w} m [${p.w}] · depth ${s.d} m [${p.d}] · cover ${s.cover} m [${p.cover}] · ${od} ${(s.od * 1000).toFixed(0)} mm [${p.od}]`
         + (s.circuits > 1 ? ` · ${s.circuits} circuits at ${(s.cs * 1000).toFixed(0)} mm [${p.cs}]` : '') + (s.tile ? ` · tile at ${s.tile} m [${p.tile}]` : '')
-        + `\nSource (${s.status}): ${s.source}` + (st.last ? `\n${st.last.ok ? 'PASS' : 'FAIL'}: drawn = typed/cited within 1 cm at ${st.last.ribs} ribs.` : '')
+        + (s.land ? `\nLand: ${s.land} [${s.landProv}${s.landProv === 'assumed' ? ', not looked up; type "trench auto other" for other land' : ''}]` : '')
+        + `\nSource (${s.status === 'typical' ? 'estimated' : s.status}): ${s.source}` + (st.last ? `\nConsistency ${st.last.ok ? 'PASS' : 'FAIL'}: drawn = typed/cited within 1 cm at ${st.last.ribs} ribs.` : '')
         + '\nIllustrative early design; the network operator decides the real connection.';
     }
     // Close enough to see true scale: X-ray lifts the zoom limit to 22 (about 2.5 cm per pixel at 51 N) and puts it back after.
@@ -304,15 +314,25 @@
           map.jumpTo({ center: [rb.lon, rb.lat], zoom: 22, pitch: 70, bearing: brg + 25 });
           return say(`At the section at chainage ${Math.round(rb.ch)} m, looking along the trench. True scale.`);
         }
-        if (/^trench\s+check$/.test(low)) { const r = check(); drawPanel(); return say(r.text); }
+        if (/^trench\s+(check|consistency)$/.test(low)) { const r = check(); drawPanel(); return say(r.text); }
         if (/^trench\s+off$/.test(low)) { st.drawn = []; SIM.repaint(); st.ribs = []; st.spec = null; st.auto = false; setXray(false); return say('Trench removed.'); }
         const route = connectRoute(); if (!route) return say('No connect-here route yet: press "Connect here" first.');
         let s;
-        if (/^trench\s+auto$/.test(low)) {
+        const am = /^trench\s+auto(?:\s+(farmland|farm|agricultural|other))?$/.exec(low);
+        if (am) {
           const c = window.__connect, all = await sections(); if (!c) return say('No connect-here route yet.');
-          const id = AUTO[c.kv] && AUTO[c.kv][c.n];
-          if (!id) return say(`No cited section in the catalogue for ${c.kv} kV with ${c.n} circuit(s). Type one: trench w .. d .. cover .. od .. (and circuits, cs).`);
-          s = fromSection(all.find(x => x.id === id)); st.auto = true;
+          const land = am[1] ? (am[1] === 'other' ? 'other' : 'farmland') : (st.land || 'farmland');
+          const id = AUTO[land][c.kv] && AUTO[land][c.kv][c.n];
+          if (!id) return say(`No cited section in the catalogue for ${c.kv} kV with ${c.n} circuit(s) on ${land}. Type one: trench w .. d .. cover .. od .. (and circuits, cs).`);
+          s = fromSection(all.find(x => x.id === id));
+          if (land === 'farmland' && s.cover < FARM_COVER - 1e-9) {      // derive the farmland section: cover to 0.91 m
+            const dz = FARM_COVER - s.cover;
+            s = Object.assign({}, s, { id: s.id + '@farmland', label: s.label + ' at farmland cover', cover: FARM_COVER, d: +(s.d + dz).toFixed(3),
+              tile: s.tile ? +(s.tile + dz).toFixed(3) : s.tile, prov: Object.assign({}, s.prov, { cover: 'cited', d: 'derived', tile: 'derived' }),
+              status: 'verified cover, derived depth', source: `Cover ${FARM_COVER} m: ${FARM_SRC}. Depth and tile lowered by ${(dz * 1000).toFixed(0)} mm from ${s.id} (derived). ${s.id}: ${s.source}` });
+          }
+          s.land = land; s.landProv = am[1] ? 'typed' : (st.landProv || 'assumed');
+          st.land = land; st.landProv = s.landProv; st.auto = true;
         } else if (/^trench\s/.test(low)) {
           const id = low.split(/\s+/)[1], all = await sections(), x = all.find(y => y.id === id);
           if (x) s = fromSection(x);
@@ -320,7 +340,7 @@
           else s = typed(line);
           st.auto = false;
         }
-        else return say('Type: trench auto | trench go | trench <section id> | trench w .. d .. cover .. od .. | trench check | trench off | xray on | xray off');
+        else return say('Type: trench auto | trench go | trench <section id> | trench w .. d .. cover .. od .. | trench auto other | trench consistency | trench off | xray on | xray off');
         validate(s); st.connectRef = window.__connect;
         const b = build(route, s), r = check();
         setXray(true);
@@ -334,7 +354,7 @@
     // Follow connect-here: when its route changes and the trench is on "auto", redraw it.
     setInterval(() => { if (st.auto && window.__connect && window.__connect !== st.connectRef && !document.hidden) { st.connectRef = window.__connect; setTimeout(() => cmd('trench auto'), 800); } }, 700);
 
-    window.__trench = { cmd, check, blocks: () => st.drawn || [], spec: () => st.spec, ribs: () => st.ribs.length, route: () => st.route, measureRib: i => measureRib(st.ribs[i], st.spec), lastText: '' };
+    window.__trench = { cmd, check, consistency: check, blocks: () => st.drawn || [], spec: () => st.spec, ribs: () => st.ribs.length, route: () => st.route, measureRib: i => measureRib(st.ribs[i], st.spec), lastText: '' };
     if (q.get('trench')) { const want = q.get('trench'); const t0 = Date.now();
       (function go() { if (window.__connect && connectRoute()) cmd(want === '1' ? 'trench auto' : 'trench ' + want); else if (Date.now() - t0 < 60000) setTimeout(go, 500); })(); }
   }

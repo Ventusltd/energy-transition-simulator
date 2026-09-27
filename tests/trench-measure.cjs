@@ -36,7 +36,11 @@ const LAT = +(process.env.TLAT || 51.215), LON = +(process.env.TLON || -1.78);
   const first = await p.evaluate(() => ({ text: window.__trench && window.__trench.lastText, c: window.__connect && { kv: window.__connect.kv, n: window.__connect.n, route_m: window.__connect.route_m } }));
   check('connect-here route exists', first.c && first.c.route_m > 0, JSON.stringify(first.c));
   const auto = await p.evaluate(() => window.__trench.check());
-  check('trench auto: cited section drawn', auto.section === ({ 33: { 1: '33kv-1-dno', 2: '33kv-2' }, 132: { 1: '132kv-1-dno', 2: '132kv-2' } }[first.c.kv] || {})[first.c.n], `${auto.section} for ${first.c.kv} kV x ${first.c.n}`);
+  const FARM = { 33: { 1: '33kv-1-agri', 2: '33kv-2-agri' }, 132: { 1: '132kv-1-dno@farmland', 2: '132kv-2@farmland' } };
+  check('trench auto: farmland section drawn (default land, labelled assumed)', auto.section === (FARM[first.c.kv] || {})[first.c.n] && auto.land === 'farmland' && auto.land_prov === 'assumed', `${auto.section} for ${first.c.kv} kV x ${first.c.n}, land ${auto.land} (${auto.land_prov})`);
+  const cov = auto.rows.find(r => r.what === 'cover');
+  check('trench auto on farmland: cover 0.91 m (S1 Table 5.4.1), cited', cov && cov.value_m === 0.91 && cov.prov === 'cited' && cov.pass, JSON.stringify(cov));
+  check('the read-back check is named "consistency"', auto.name === 'consistency' && /^Trench consistency (PASS|FAIL)/.test(auto.text) && /not a site survey/.test(auto.text), auto.text.slice(0, 120));
   check('trench auto: drawn = cited within 1 cm at every rib', auto.ok && auto.ribs > 0, auto.text);
   for (const r of auto.rows) check(`  ${r.what} ${r.value_m} m (${r.prov})`, r.pass, `worst ${(r.worst_err_m * 1000).toFixed(3)} mm`);
   await p.screenshot({ path: path.join(OUT, '1-route-overview.png') });
@@ -51,6 +55,16 @@ const LAT = +(process.env.TLAT || 51.215), LON = +(process.env.TLON || -1.78);
   await p.evaluate(() => window.SIM.map.jumpTo({ pitch: 0, bearing: 0 }));
   await p.waitForTimeout(3000);
   await p.screenshot({ path: path.join(OUT, '3-xray-plan-z22.png') });
+  // Other land (typed): the catalogue's 0.90 m (132 kV) or 0.75 m (33 kV) section, labelled typed.
+  const oth = await p.evaluate(async () => { await window.__trench.cmd('trench auto other'); return window.__trench.consistency(); });
+  const ocov = oth.rows.find(r => r.what === 'cover');
+  check('trench auto other: other-land cover, land typed', oth.ok && oth.land === 'other' && oth.land_prov === 'typed' && ocov.value_m < 0.91 && !/@farmland/.test(oth.section), `${oth.section} cover ${ocov.value_m} (${ocov.prov})`);
+  const fb = await p.evaluate(async () => { await window.__trench.cmd('trench auto farmland'); await window.__trench.cmd('trench go'); return window.__trench.consistency(); });
+  check('trench auto farmland: back to 0.91 m, land typed', fb.ok && fb.rows.find(r => r.what === 'cover').value_m === 0.91 && fb.land_prov === 'typed', fb.section);
+  await p.waitForTimeout(3000); await p.evaluate(() => window.SIM.map.fire('moveend')); await p.waitForTimeout(800);
+  const foot = await p.evaluate(() => document.getElementById('trench-foot').textContent);
+  check('panel shows the land class and "Consistency", no "typical"', /Land: farmland \[typed\]/.test(foot) && /Consistency PASS/.test(foot) && !/typical/i.test(foot), foot.slice(0, 300));
+  await p.screenshot({ path: path.join(OUT, '2b-farmland-walk-z22.png') });
   // A typed section.
   const t = await p.evaluate(async () => { const txt = await window.__trench.cmd('trench w 0.6 d 1.2 cover 0.9 od 160mm'); return { txt, r: window.__trench.check(), s: window.__trench.spec() }; });
   check('typed section drawn and checked within 1 cm', t.r.ok && t.s.id === 'typed' && t.s.w === 0.6 && t.s.d === 1.2 && t.s.cover === 0.9 && Math.abs(t.s.od - 0.16) < 1e-12, t.r.text);
@@ -62,6 +76,7 @@ const LAT = +(process.env.TLAT || 51.215), LON = +(process.env.TLON || -1.78);
   // Two circuits (cited 132kv-2).
   const two = await p.evaluate(async () => { await window.__trench.cmd('trench 132kv-2'); return window.__trench.check(); });
   check('cited 132kv-2 (two circuits) within 1 cm incl. circuit spacing', two.ok && two.rows.some(r => r.what === 'cs'), two.text);
+  check('catalogue status "typical" is tagged "estimated"', two.rows.find(r => r.what === 'cover').prov === 'estimated' && !two.rows.some(r => /typical/.test(r.prov)), two.rows.map(r => r.what + ':' + r.prov).join(' '));
   await p.evaluate(() => window.SIM.map.fire('moveend')); await p.waitForTimeout(800);
   await p.screenshot({ path: path.join(OUT, '5-two-circuits.png') });
   // X-ray off: the trench is depth-tested like the ground (buried), and the zoom limit is given back.
