@@ -33,7 +33,7 @@
     for (const k of ['dtm', 'dsm']) {
       const r = t[k];
       if (!r) continue;
-      if (r.none) { L.push(`${k.toUpperCase()}: no measured ground here (${r.none})`); continue; }
+      if (r.none) { L.push(r.failed ? r.none : `${k.toUpperCase()}: no measured ground here (${r.none})`); continue; }
       if (r.pending) { L.push(`${k.toUpperCase()}: ${r.pending}`); continue; }
       L.push(`${k.toUpperCase()} receipt ${r.sha.slice(0, 12)}: ${r.src.product}, ${r.src.release}; survey year not read yet, so these heights count as pre-construction ground (R5 rule 9); ` +
         `box E ${r.box.e0}-${r.box.e1} N ${r.box.n0}-${r.box.n1}; fetched ${r.at}; ${(r.valid * 100).toFixed(1)}% cells measured; sha256(cells) ${r.sha}`);
@@ -114,7 +114,13 @@
       const sha = await R5.cellSha256(geo.data, crypto.subtle);
       t[k] = { src, box: b, url, at, geo, mask: m.mask, valid: m.frac, sha, tile: t.tile };
     } catch (e) {
-      t[k] = { none: e.message };
+      // Status 0 = the request never got an HTTP answer (network, abort, or a response the browser refused). One retry,
+      // in this arrival only, through the pacer (40 s gap); movement never triggers it. 403/429 go to the pause via done().
+      const reason = (e && e.message) || 'network error';
+      t.tries = t.tries || {};
+      if (status === 0 && !t.tries[k]) { t.tries[k] = 1; t[k] = null; t.retryNote = `${k.toUpperCase()} fetch failed (${reason}); retrying once`; }
+      else if (status === 0) t[k] = { none: `${k.toUpperCase()} fetch failed (${reason}); no measured ground shown`, failed: true };
+      else t[k] = { none: e.message };
     } finally { pacer.done(status); if (gapOverride != null) pacer.state.next = Date.now() + gapOverride; }
   }
 
@@ -123,14 +129,14 @@
     const t = current && tiles.get(current);
     if (!t || !on) return;
     const need = !t.dtm ? 'dtm' : (!t.dsm && t.dtm && !t.dtm.none && !t.dtm.pending) ? 'dsm' : null;
-    if (!need) { t.status = t.dtm && t.dtm.none ? 'no measured ground here' : 'complete'; show(); return; }
-    const why = pacer.why();
+    if (!need) { t.status = t.dtm && t.dtm.failed ? t.dtm.none : t.dtm && t.dtm.none ? 'no measured ground here' : 'complete'; show(); return; }
+    const why = pacer.why(), retry = t.tries && t.tries[need] ? `${t.retryNote}: ` : '';
     if (why) {
-      t.status = `${need.toUpperCase()} ${why}`; show();
+      t.status = `${retry}${need.toUpperCase()} ${why}`; show();
       if (!pacer.state.stopped && !/daily cap/.test(why)) timer = setTimeout(step, 1000);
       return;
     }
-    t.status = `streaming the ${need.toUpperCase()}`; show();
+    t.status = `${retry}streaming the ${need.toUpperCase()}`; show();
     const key = current;
     fetchProduct(key, need).then(() => { draw(key); if (current === key) step(); show(); });
   }
