@@ -75,13 +75,22 @@ const LAT = +(process.env.TLAT || 51.215), LON = +(process.env.TLON || -1.78);
     window.__connect = c0;
     const said33 = await window.__trench.cmd('trench 33kv-1-agri'); const r33 = window.__trench.check();
     window.SIM.map.fire('moveend'); await new Promise(z => setTimeout(z, 300));
-    out.k33 = { said: said33, cover: r33.rows.find(x => x.what === 'cover'), foot: document.getElementById('trench-foot').textContent };
+    out.k33 = { said: said33, cover: r33.rows.find(x => x.what === 'cover'), foot: document.getElementById('trench-foot').textContent, spec: window.__trench.spec() };
+    window.__connect = Object.assign({}, c0, { kv: 132, n: 2 });   // 132 kV two circuits on farmland
+    await window.__trench.cmd('trench auto farmland'); out.k132b = { section: window.__trench.check().section, spec: window.__trench.spec() };
+    window.__connect = c0; await window.__trench.cmd('trench 33kv-1-agri'); window.SIM.map.fire('moveend'); await new Promise(z => setTimeout(z, 300));
     return out;
   });
-  const CAV = "S2 asks 1.05 m on agricultural land; not applied; the network operator's spec decides";
+  const CAV = /S2 asks 1\.05 m on agricultural land( \(from [a-z0-9@-]+'s source\))?; not applied; the network operator's spec decides/;
+  const has = (s, re) => re.test(String(s || ''));
   check('132kv-1-dno@farmland: cover tag contains "minimum"', conf.k132.section === '132kv-1-dno@farmland' && /minimum/.test(conf.k132.cover.prov) && conf.k132.cover.value_m === 0.91 && conf.k132.cover.pass, JSON.stringify(conf.k132.cover));
-  check('132 kV farmland: panel and result text carry the S2 1.05 m caveat', /1\.05/.test(conf.k132.foot) && conf.k132.foot.includes(CAV) && conf.k132.text.includes(CAV) && conf.k132.said.includes(CAV), conf.k132.foot.slice(-260));
-  check('33kv-1-agri shows the same caveat, cover still 0.91 m', /minimum/.test(conf.k33.cover.prov) && conf.k33.cover.value_m === 0.91 && conf.k33.foot.includes(CAV) && conf.k33.said.includes(CAV), conf.k33.cover.prov + ' | ' + conf.k33.foot.slice(-200));
+  check('132 kV farmland: panel and result text carry the S2 1.05 m caveat', /1\.05/.test(conf.k132.foot) && has(conf.k132.foot, CAV) && has(conf.k132.text, CAV) && has(conf.k132.said, CAV), conf.k132.foot.slice(-260));
+  check('33kv-1-agri shows the same caveat, cover still 0.91 m', /minimum/.test(conf.k33.cover.prov) && conf.k33.cover.value_m === 0.91 && has(conf.k33.foot, CAV) && has(conf.k33.said, CAV), conf.k33.cover.prov + ' | ' + conf.k33.foot.slice(-200));
+  // S2 borrowed from another section: named inside the caveat sentence, never as a bracket right after "... assumed".
+  const named = k => { const sp = k.spec || {}, from = sp.s2 && sp.s2.from, src = String(sp.source || '');
+    return { ok: !!from && from !== sp.id.replace(/@.*$/, '') && !/assumed\.?\s*\[/i.test(src) && !/\[[a-z0-9@-]+: S2 /.test(src) && String(sp.caveat).includes(`(from ${from}'s source)`) && src.includes(sp.caveat), ev: `${sp.id} from ${from}: ${src.slice(-230)}` }; };
+  const n33 = named(conf.k33), n132 = named(conf.k132b);
+  check('S2 from another section is named in the caveat, no bracket after "assumed" (33kv-1-agri, 132kv-2@farmland)', conf.k132b.section === '132kv-2@farmland' && n33.ok && n132.ok, n33.ev + ' || ' + n132.ev);
   await p.screenshot({ path: path.join(OUT, '2c-33kv-agri-caveat.png') });
   const k33o = await p.evaluate(async () => { await window.__trench.cmd('trench 33kv-1-dno'); return window.__trench.check().rows.find(x => x.what === 'cover'); });
   check('other-land section keeps plain "cited" (no farmland caveat)', k33o.prov === 'cited', JSON.stringify(k33o));

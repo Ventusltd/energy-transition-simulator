@@ -76,9 +76,10 @@
       const cands = [{ id: baseId || s.id, src: s.source }].concat(all.filter(x => x.id !== (baseId || s.id) && x.id.split('-')[0] === kv).map(x => ({ id: x.id, src: x.source })));
       for (const c of cands) { const v = s2Agri(c.src);
         if (v > s.cover + 1e-9) {
-          const note = `S2 asks ${+v.toFixed(3)} m on agricultural land; not applied; the network operator's spec decides`;
+          const other = c.id !== (baseId || s.id);   // name the section inside the sentence, not as a bracket after "Width assumed"
+          const note = `S2 asks ${+v.toFixed(3)} m on agricultural land${other ? ` (from ${c.id}'s source)` : ''}; not applied; the network operator's spec decides`;
           return Object.assign({}, s, { prov: Object.assign({}, s.prov, { cover: 'cited minimum' }), s2: { cover_m: v, from: c.id }, caveat: note,
-            source: s.source.replace(/\.\s*$/, '') + (c.id !== (baseId || s.id) ? ` [${c.id}: S2 ${+v.toFixed(3)} m agricultural]` : '') + '. ' + note });
+            source: s.source.replace(/\.\s*$/, '') + '. ' + note });
         } }
       return s;
     }
