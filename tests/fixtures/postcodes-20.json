@@ -1,0 +1,168 @@
+{
+ "schema": "addresses.postcodes-fixture.v1",
+ "source": "https://api.postcodes.io/postcodes (bulk lookup, one request, fetched 2026-09-27)",
+ "licence": "postcodes.io data: ONS Postcode Directory. Contains OS data (c) Crown copyright and database right; contains Royal Mail data (c) Royal Mail copyright and database right; contains National Statistics data (c) Crown copyright and database right. Open Government Licence v3.",
+ "provenance": "published centroid (ONSPD grid reference, 1 m; lat/lon as published by postcodes.io)",
+ "rows": [
+  {
+   "postcode": "SW1A 1AA",
+   "latitude": 51.50101,
+   "longitude": -0.141563,
+   "eastings": 529090,
+   "northings": 179645,
+   "country": "England"
+  },
+  {
+   "postcode": "SW1A 2AA",
+   "latitude": 51.503541,
+   "longitude": -0.12767,
+   "eastings": 530047,
+   "northings": 179951,
+   "country": "England"
+  },
+  {
+   "postcode": "EC1A 1BB",
+   "latitude": 51.524567,
+   "longitude": -0.112017,
+   "eastings": 531073,
+   "northings": 182317,
+   "country": "England"
+  },
+  {
+   "postcode": "W1A 1AA",
+   "latitude": 51.518563,
+   "longitude": -0.143774,
+   "eastings": 528887,
+   "northings": 181593,
+   "country": "England"
+  },
+  {
+   "postcode": "M1 1AE",
+   "latitude": 53.483487,
+   "longitude": -2.231182,
+   "eastings": 384756,
+   "northings": 398553,
+   "country": "England"
+  },
+  {
+   "postcode": "B1 1BB",
+   "latitude": 52.480144,
+   "longitude": -1.90289,
+   "eastings": 406692,
+   "northings": 286916,
+   "country": "England"
+  },
+  {
+   "postcode": "LS1 1UR",
+   "latitude": 53.802177,
+   "longitude": -1.548522,
+   "eastings": 429833,
+   "northings": 434079,
+   "country": "England"
+  },
+  {
+   "postcode": "CF10 1EP",
+   "latitude": 51.475764,
+   "longitude": -3.179217,
+   "eastings": 318200,
+   "northings": 175860,
+   "country": "Wales"
+  },
+  {
+   "postcode": "EH1 1YZ",
+   "latitude": 55.950328,
+   "longitude": -3.193018,
+   "eastings": 325597,
+   "northings": 673676,
+   "country": "Scotland"
+  },
+  {
+   "postcode": "G1 1XQ",
+   "latitude": 55.861245,
+   "longitude": -4.244692,
+   "eastings": 259609,
+   "northings": 665397,
+   "country": "Scotland"
+  },
+  {
+   "postcode": "BS1 4DJ",
+   "latitude": 51.451733,
+   "longitude": -2.596864,
+   "eastings": 358622,
+   "northings": 172697,
+   "country": "England"
+  },
+  {
+   "postcode": "NE1 7RU",
+   "latitude": 54.980327,
+   "longitude": -1.615727,
+   "eastings": 424693,
+   "northings": 565147,
+   "country": "England"
+  },
+  {
+   "postcode": "L1 8JQ",
+   "latitude": 53.404567,
+   "longitude": -2.987154,
+   "eastings": 334469,
+   "northings": 390202,
+   "country": "England"
+  },
+  {
+   "postcode": "NG1 5FS",
+   "latitude": 52.954906,
+   "longitude": -1.155276,
+   "eastings": 456847,
+   "northings": 340057,
+   "country": "England"
+  },
+  {
+   "postcode": "OX1 1DP",
+   "latitude": 51.749908,
+   "longitude": -1.256533,
+   "eastings": 451420,
+   "northings": 205951,
+   "country": "England"
+  },
+  {
+   "postcode": "CB2 1TN",
+   "latitude": 52.205118,
+   "longitude": 0.116208,
+   "eastings": 544705,
+   "northings": 258430,
+   "country": "England"
+  },
+  {
+   "postcode": "PL1 2AA",
+   "latitude": 50.369569,
+   "longitude": -4.143034,
+   "eastings": 247696,
+   "northings": 54383,
+   "country": "England"
+  },
+  {
+   "postcode": "NR2 1NH",
+   "latitude": 52.628599,
+   "longitude": 1.291638,
+   "eastings": 622864,
+   "northings": 308511,
+   "country": "England"
+  },
+  {
+   "postcode": "S1 2HE",
+   "latitude": 53.381711,
+   "longitude": -1.469388,
+   "eastings": 435393,
+   "northings": 387336,
+   "country": "England"
+  },
+  {
+   "postcode": "LN1 3AA",
+   "latitude": 53.234602,
+   "longitude": -0.539139,
+   "eastings": 497604,
+   "northings": 371834,
+   "country": "England"
+  }
+ ]
+}
