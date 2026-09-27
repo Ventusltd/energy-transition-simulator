@@ -1,10 +1,11 @@
 // mod/pylons-real.js - lattice pylons and sagging conductors on the real GridAtlas lines.
-// Plain script. Attaches to window.SIM ({ map, ... }) and uses the overlay's place frame (window.__pf.PF), so every
-// tower is authored in metres around a 100 m place key and lands on its exact WGS84 position.
-// What is real: tower positions = GridAtlas line vertices (lines from OpenStreetMap), with vertices closer than
-// MERGE_M merged. What is estimated: towers inserted on long straight runs (typical span), tower shape and height,
-// arm lengths, insulator length and conductor sag, all by voltage class. Drawn in its own custom layer:
-// one GPU buffer per tower block, uploaded once, reused every frame; hidden below zoom MIN_Z.
+// Plain script. Attaches to window.SIM ({ map, addBlock, removeWhere, ... }) and uses the overlay's place frame
+// (window.__pf.PF), so every tower is authored in metres around a 100 m place key and lands on its exact WGS84 position.
+// MAPPED POSITIONS (exact): towers at GridAtlas line vertices (lines from OpenStreetMap, ODbL); a vertex closer than
+// MERGE_M to the previous kept one is dropped, never moved. ESTIMATED: infill towers on long straight runs (typical
+// span), tower shape and height, arm lengths, insulator length and conductor sag, all by voltage class (not surveyed).
+// Drawn through the overlay's ONE wire layer (SIM.addBlock): one block per tower, no layer or GL program of its own.
+// Hidden below zoom MIN_Z. window.__pylonsReal.check() tests every mapped tower against its GridAtlas vertex with ===.
 (function () {
   'use strict';
   const MIN_Z = 14, MAX_TOWERS = 260, MERGE_M = 60, SEG = 12;
@@ -23,14 +24,14 @@
   const lines = { };                     // kv -> [{ bbox, coords }]
   const runs = new Map();                // `${kv}:${lineIndex}` -> tower list (built lazily, cached)
   const live = new Map();                // tower id -> block { anchor, lon, lat, gz, buf, nTower, nWire, col }
-  let gl = null, prog = null, loc = {}, pending = 0, regrades = 0;
+  let pending = 0, regrades = 0;
 
   const ready = () => { SIM = window.SIM; PF = window.__pf && window.__pf.PF; return SIM && SIM.map && PF; };
   (function wait(n) { if (ready()) start(); else if (n < 200) setTimeout(() => wait(n + 1), 100); })(0);
 
   function start() {
     map = SIM.map;
-    if (SIM.addButton) { btn = SIM.addButton('Pylons (real)', () => { on = !on; btn.classList.toggle('on', on); refresh(); }); btn.classList.add('on'); }
+    if (SIM.addButton) { btn = SIM.addButton('Pylons (mapped)', () => { on = !on; btn.classList.toggle('on', on); refresh(); }); btn.classList.add('on'); }
     Promise.all(Object.keys(KV).map(kv => fetch(`${GA}/grid_${kv}kv.geojson`).then(r => r.json()).then(j => {
       const L = [];
       for (const f of j.features || []) { const g = f.geometry; if (!g) continue;
@@ -38,9 +39,8 @@
           let w = 180, s = 90, e = -180, n = -90; for (const [x, y] of c) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y; }
           L.push({ bbox: [w, s, e, n], coords: c }); } }   // properties (names) are never read or shown
       lines[kv] = L;
-    }).catch(() => { lines[kv] = []; }))).then(() => { addLayer(); refresh(); });
+    }).catch(() => { lines[kv] = []; }))).then(refresh);
     map.on('moveend', refresh);
-    map.on('style.load', () => setTimeout(() => { addLayer(); refresh(); }, 50));
     map.on('idle', () => { if (pending && regrades < 6) { pending = 0; regrades++; regrade(); } });
   }
 
@@ -91,14 +91,16 @@
 
   function elev(lon, lat) { const e = map.queryTerrainElevation ? map.queryTerrainElevation([lon, lat]) : 0; if (e == null) pending = 1; return e || 0; }
 
+  // One block per tower for the ONE wire layer (SIM.addBlock). The wire layer lifts each block by the ground height
+  // at its place-key anchor, so the tower's own ground offset (tower minus anchor) is baked into z here.
   function makeBlock(t) {
     const g = KV[t.kv], an = PF.placeKey(t.lat, t.lon), o = PF.toLocal(an, t.lat, t.lon, 0);
-    const u = t.u, v = [-u[1], u[0]], gz = elev(t.lon, t.lat);
-    const X = (a, l, z, base = o, uu = u, vv = v, dz = 0) => [base.x + uu[0] * a + vv[0] * l, base.y + uu[1] * a + vv[1] * l, z + dz];
+    const u = t.u, v = [-u[1], u[0]], ga = elev(an.lon, an.lat), gz = elev(t.lon, t.lat) - ga;
+    const X = (a, l, z, base = o, uu = u, vv = v, dz = gz) => [base.x + uu[0] * a + vv[0] * l, base.y + uu[1] * a + vv[1] * l, z + dz];
     const T = lattice(g).map(s => [...X(s[0], s[1], s[2]), ...X(s[3], s[4], s[5])]);
     const W = [];
     if (t.next) {                                    // conductors to the next tower: 3 phases per side + earth wire
-      const n = t.next, q = PF.toLocal(an, n.lat, n.lon, 0), nv = [-n.u[1], n.u[0]], dz = elev(n.lon, n.lat) - gz;
+      const n = t.next, q = PF.toLocal(an, n.lat, n.lon, 0), nv = [-n.u[1], n.u[0]], dz = elev(n.lon, n.lat) - ga;
       const span = Math.hypot(q.x - o.x, q.y - o.y), sag = span * span / (8 * g.a);
       for (const [l, z] of attach(g)) {
         const A = X(0, l, z), B = X(0, l, z, q, n.u, nv, dz); let prev = A;
@@ -106,13 +108,15 @@
           W.push([...prev, ...p]); prev = p; }
       }
     }
-    const data = PF.wireBuffer(an, T.concat(W)), buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);   // once
-    return { pylonsReal: true, lon: t.lon, lat: t.lat, anchor: an, gz, buf, nTower: T.length * 2, nWire: W.length * 2, col: g.col, t };
+    const lines = T.concat(W);
+    return { pylonsReal: true, id: t.id, lon: t.lon, lat: t.lat, anchor: an, lines, buf: PF.wireBuffer(an, lines),
+      nTower: T.length * 2, nWire: W.length * 2, col: g.col, est: t.est, kv: t.kv, t,
+      prov: t.est ? 'estimated: infill tower at the typical span between two mapped vertices'
+                   : 'mapped position: GridAtlas line vertex (OpenStreetMap, ODbL), exact' };
   }
 
   function refresh() {
-    if (!map || !gl) return;
+    if (!map || !SIM.addBlock) return;
     const want = new Set();
     if (on && map.getZoom() >= MIN_Z) {
       const b = map.getBounds(), c = map.getCenter(), mx = (b.getEast() - b.getWest()) * 0.25, my = (b.getNorth() - b.getSouth()) * 0.25;
@@ -122,44 +126,33 @@
         for (const t of towersOf(kv, li)) if (t.lon >= W && t.lon <= E && t.lat >= S && t.lat <= N) cand.push([dist([c.lng, c.lat], [t.lon, t.lat]), t]);
       });
       cand.sort((a, b) => a[0] - b[0]);
-      for (const [, t] of cand.slice(0, MAX_TOWERS)) want.add(t.id), live.has(t.id) || live.set(t.id, makeBlock(t));
+      for (const [, t] of cand.slice(0, MAX_TOWERS)) { want.add(t.id); if (!live.has(t.id)) live.set(t.id, SIM.addBlock(makeBlock(t))); }
     }
-    for (const [id, bk] of live) if (!want.has(id)) { gl.deleteBuffer(bk.buf); live.delete(id); }
-    if (SIM.info && on && live.size) SIM.info(`Pylons: ${live.size} at GridAtlas line vertices (© OpenStreetMap). Heights, arms, sag and infill towers are estimates.`);
-    map.triggerRepaint();
+    let gone = 0; for (const id of live.keys()) if (!want.has(id)) { live.delete(id); gone++; }
+    if (gone) SIM.removeWhere(b => b.pylonsReal && !want.has(b.id));
+    if (SIM.info && on && live.size) SIM.info(label());
+    SIM.repaint();
+  }
+  // The on-screen label: what is a mapped position and what is estimated, with the count of each.
+  function label() {
+    let m = 0, e = 0; for (const bk of live.values()) bk.est ? e++ : m++;
+    return `Pylons: ${m} mapped positions (GridAtlas line vertices, © OpenStreetMap contributors, ODbL) and ${e} estimated infill towers. ` +
+      'Tower shape, height, arms and conductor sag are estimates by voltage class.';
   }
   // Terrain arrives after the first build: re-grade the blocks built on missing heights (their spans too).
-  function regrade() { for (const [id, bk] of live) { gl.deleteBuffer(bk.buf); live.delete(id); } refresh(); }
+  function regrade() { SIM.removeWhere(b => b.pylonsReal); live.clear(); refresh(); }
 
-  const layer = {
-    id: 'pylons-real', type: 'custom', renderingMode: '3d',
-    onAdd(m, g) {
-      if (gl === g && prog) return; gl = g; live.clear();
-      const sh = (t, s) => { const o = g.createShader(t); g.shaderSource(o, s); g.compileShader(o); return o; };
-      prog = g.createProgram();
-      g.attachShader(prog, sh(g.VERTEX_SHADER, 'uniform mat4 u; attribute vec3 p; void main(){ gl_Position = u * vec4(p, 1.0); }'));
-      g.attachShader(prog, sh(g.FRAGMENT_SHADER, 'precision mediump float; uniform vec3 c; void main(){ gl_FragColor = vec4(c, 1.0); }'));
-      g.linkProgram(prog); loc = { p: g.getAttribLocation(prog, 'p'), u: g.getUniformLocation(prog, 'u'), c: g.getUniformLocation(prog, 'c') };
-    },
-    render(g, args) {
-      if (!on || map.getZoom() < MIN_Z || !live.size) return;
-      const m = (args && args.defaultProjectionData && args.defaultProjectionData.mainMatrix) || args, M = new Float32Array(16);
-      g.useProgram(prog); g.enableVertexAttribArray(loc.p);
-      for (const bk of live.values()) {
-        const a = bk.anchor, o = PF.toMercator(a.lat, a.lon, bk.gz);
-        for (let k = 0; k < 16; k++) M[k] = m[k];
-        for (let k = 0; k < 4; k++) M[12 + k] = m[k] * o.x + m[4 + k] * o.y + m[8 + k] * o.z + m[12 + k];
-        g.uniformMatrix4fv(loc.u, false, M);
-        g.bindBuffer(g.ARRAY_BUFFER, bk.buf); g.vertexAttribPointer(loc.p, 3, g.FLOAT, false, 0, 0);
-        g.uniform3fv(loc.c, TOWER_COL); g.drawArrays(g.LINES, 0, bk.nTower);
-        if (bk.nWire) { g.uniform3fv(loc.c, bk.col); g.drawArrays(g.LINES, bk.nTower, bk.nWire); }
-      }
+  // Exact check: every tower not flagged estimated must equal a vertex of its GridAtlas line (===, no tolerance),
+  // and every estimated tower must lie on the straight segment between two kept vertices.
+  function check() {
+    let exact = 0, bad = [], est = 0;
+    for (const bk of live.values()) {
+      const [kv, li] = bk.id.split(':'), c = lines[kv][+li].coords;
+      if (!bk.est) { if (c.some(p => p[0] === bk.lon && p[1] === bk.lat)) exact++; else bad.push(bk.id); }
+      else est++;
     }
-  };
-  function addLayer() {
-    if (!map.isStyleLoaded()) { map.once('idle', () => { addLayer(); refresh(); }); return; }
-    try { if (!map.getLayer('pylons-real')) map.addLayer(layer); } catch (e) { map.once('idle', () => { addLayer(); refresh(); }); }
+    return { live: live.size, exact, est, bad, label: label() };
   }
 
-  window.__pylonsReal = { live, refresh, count: () => live.size, towersOf, KV };
+  window.__pylonsReal = { live, refresh, count: () => live.size, towersOf, KV, check, label, lines };
 })();

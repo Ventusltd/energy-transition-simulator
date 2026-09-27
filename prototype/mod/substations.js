@@ -10,7 +10,7 @@
   var ATLAS = '202608300453-atlas-v9';
   var here = (document.currentScript && document.currentScript.src) || location.href;
   var FP_URL = new URL('substations-footprints.odbl.json', here).href;
-  var CREDIT = 'Substation points: GridAtlas. Fences: OpenStreetMap contributors (ODbL); dashed fence and all plinths are estimates.';
+  var CREDIT = 'Substations: mapped positions (GridAtlas points). Fences: OpenStreetMap footprints, © OpenStreetMap contributors (ODbL); a dashed fence and all plinths are estimates.';
   var RADIUS = 2500, MAX = 60, MINZ = 12.5;
 
   // ---- WGS84 local east/north metres around a reference (same ellipsoid as place-frame.mjs) ----
@@ -179,11 +179,20 @@
     (bar || document.body).appendChild(inp);
   }
 
+  // Exact check: each compound sits at its GridAtlas point (===), and says whether its fence is a mapped footprint.
+  function check() {
+    var exact = 0, bad = [], mapped = 0, est = 0;
+    for (var i in built) { var b = built[i], s = pts[b.substation];
+      if (s && b.lon === s.lon && b.lat === s.lat) exact++; else bad.push(b.substation);
+      if (b.est) est++; else mapped++; }
+    return { live: Object.keys(built).length, exact: exact, bad: bad, footprint: mapped, estimated: est, credit: CREDIT };
+  }
+
   function start() {
     ui();
     SIM.map.on('moveend', function () { if (on) refresh(false); });
     window.SUBS = { go: go, command: command, show: function (v) { on = v !== false; syncBtn(); return load().then(function () { refresh(true); }); },
-      count: function () { return Object.keys(built).length; }, credit: CREDIT };
+      count: function () { return Object.keys(built).length; }, credit: CREDIT, check: check };
   }
   (function wait() { if (window.SIM && SIM.map) start(); else setTimeout(wait, 100); })();
 })();
