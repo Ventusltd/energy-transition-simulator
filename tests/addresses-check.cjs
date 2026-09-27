@@ -23,10 +23,12 @@ fs.mkdirSync(OUT, { recursive: true });
 const metres = (a, b) => { const k = Math.cos((a.lat + b.lat) * Math.PI / 360); return Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * k); };
 // mode 'crlf' serves the OSTN15 index with CRLF line ends (what a Windows autocrlf checkout holds); mode 'http500'
 // answers it with HTTP 500. Both must make the landing label name the fault, not "no OSTN15 block here".
+// mode 'block500' answers only the block 51_-1 (holds TP09) with HTTP 500: that fault applies there and nowhere else.
 const serve = mode => http.createServer((q, s) => {
   const f = path.join(ROOT, decodeURIComponent(q.url.split('?')[0]).replace(/^\/+/, '') || 'overlay.html');
   if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end(); }
-  if (mode && path.basename(f) === 'ostn15.json') {
+  if (mode === 'block500' && path.basename(f) === '51_-1.o15') { s.writeHead(500); return s.end(); }
+  if (mode && mode !== 'block500' && path.basename(f) === 'ostn15.json') {
     if (mode === 'http500') { s.writeHead(500); return s.end(); }
     s.writeHead(200, { 'Content-Type': 'application/json' }); return s.end(fs.readFileSync(f, 'utf8').replace(/\r?\n/g, '\r\n'));
   }
@@ -117,26 +119,38 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
     tp09 ? `err ${tp09.err.toFixed(4)} m, readback ${tp09.cen.toFixed(4)} m by ${tp09.engine}` : 'TP09 not run');
 
   // 6. OSTN15 fails to load: the label must name the fault and tag the value estimated, not claim "no block here".
-  const faultRun = async (mode, want, shots) => {
+  const HELMERT = 'Helmert, about 3.5 m (OS guide, section 6.6)';
+  const faultRun = async (mode, want, shots, scot) => {
     const srv = serve(mode); await new Promise(r => srv.listen(0, '127.0.0.1', r));
     const q = await b.newPage({ viewport: { width: 1280, height: 800 } }), qerr = []; q.on('pageerror', e => qerr.push(e.message));
     await q.route('**/mod/index.json', async r => { const list = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'index.json'), 'utf8'));
       r.fulfill({ contentType: 'application/json', body: JSON.stringify(list.includes('addresses') ? list : [...list, 'addresses']) }); });
+    await q.route('https://api.postcodes.io/**', r => { const key = decodeURIComponent(r.request().url().split('/').pop()).replace(/\s/g, '').toUpperCase();
+      const row = FIX.rows.find(x => x.postcode.replace(/\s/g, '') === key);
+      return row ? r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: 200, result: row }) })
+        : r.fulfill({ status: 404, contentType: 'application/json', body: '{"status":404}' }); });
     await q.goto(`http://127.0.0.1:${srv.address().port}/overlay.html?lat=51.5&lon=-0.12`, { waitUntil: 'load' });
     await q.waitForFunction(() => window.SIM && window.SIM.addresses, null, { timeout: 30000 });
-    await q.click('#fg-in'); await q.fill('#fg-in', 'TQ 30624 78388'); await q.keyboard.press('Enter');
-    await q.waitForTimeout(500); await q.waitForFunction(() => !window.SIM.map.isMoving(), null, { timeout: 30000 }); await q.waitForTimeout(2500);
-    const got = await q.evaluate(() => ({ info: document.getElementById('info').textContent, last: window.SIM.addresses.last(), fault: window.SIM.addresses.fault() }));
+    const typeGo = async t => { await q.click('#fg-in'); await q.fill('#fg-in', t); await q.keyboard.press('Enter');
+      await q.waitForTimeout(500); await q.waitForFunction(() => !window.SIM.map.isMoving(), null, { timeout: 30000 }); await q.waitForTimeout(2500);
+      return q.evaluate(() => ({ info: document.getElementById('info').textContent, last: window.SIM.addresses.last(), fault: window.SIM.addresses.fault() })); };
+    const got = await typeGo('TQ 30624 78388');
     const txt = got.last ? got.last.text : '';
-    check(`OSTN15 ${mode}: typed grid ref label names the fault`, txt.includes('Helmert, about 3.5 m: ' + want) && txt.includes('[estimated]') && !/no OSTN15 block here/.test(txt) && !/ by OSTN15\./.test(txt),
+    check(`OSTN15 ${mode}: typed grid ref label names the fault`, txt.includes(HELMERT + ': ' + want) && txt.includes('[estimated]') && !/no OSTN15 block here/.test(txt) && !/ by OSTN15\./.test(txt) && !/±5/.test(txt),
       txt || JSON.stringify(got));
     if (shots) { await q.screenshot({ path: path.join(OUT, shots[0] + '.png') });
-      await q.setViewportSize({ width: 390, height: 844 }); await q.waitForTimeout(1500); await q.screenshot({ path: path.join(OUT, shots[1] + '.png') }); }
+      if (shots[1]) { await q.setViewportSize({ width: 390, height: 844 }); await q.waitForTimeout(1500); await q.screenshot({ path: path.join(OUT, shots[1] + '.png') }); } }
+    if (scot) { // same page: a key not in the index keeps "no OSTN15 block here", with no stale block fault
+      const g2 = await typeGo('go EH1 1YZ'), t2 = g2.last ? g2.last.text : '';
+      check(`OSTN15 ${mode}: EH1 1YZ afterwards still says no OSTN15 block here, not the stale fault`,
+        /^EH1 1YZ/.test(t2) && t2.includes(HELMERT + ', no OSTN15 block here') && !/could not be fetched|failed its check|\[estimated\]|±5/.test(t2), t2 || JSON.stringify(g2));
+      await q.screenshot({ path: path.join(OUT, scot + '.png') }); }
     check(`OSTN15 ${mode}: no page errors`, qerr.length === 0, qerr.join(' | ') || 'none');
     await q.close(); srv.close();
   };
   await faultRun('crlf', 'OSTN15 index failed its check', ['9-ostn15-crlf-fault-desktop', '10-ostn15-crlf-fault-phone390']);
   await faultRun('http500', 'OSTN15 index could not be fetched', null);
+  await faultRun('block500', 'OSTN15 block 51_-1 could not be fetched (HTTP 500)', ['11-block500-TP09-fault'], '12-block500-then-EH11YZ-no-block');
 
   await b.close(); server.close();
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ worstPostcodeMetres: worstPc, worstGridRefMetres: worstGr, results }, null, 1));

@@ -28,26 +28,32 @@
   const GRIDREF = /^[A-HJ-Z]{2}\s*[\d\s]*$/i;
   const onGrid = (e, n) => Number.isFinite(e) && Number.isFinite(n) && e >= 0 && e < 700000 && n >= 0 && n < 1300000;
 
-  let BNG = null, OSTN = null, ostnFault = null;
+  let BNG = null, OSTN = null, OSTNM = null;
   // ostn15.mjs's need() turns any load failure into "no block here" (false). So hand it our own fetcher, the same
   // fetch-and-SHA-256 check as its default, which also records WHY a load failed: the landing label must then name
-  // the fault (index failed its check / could not be fetched), never claim that the block is simply not held.
+  // the fault, never claim that the block is simply not held. Faults are kept by scope: an index fault touches every
+  // lookup; a block fault touches only lookups in that block (keyed "lat0_lon0", as ostn15.mjs's blockKey).
+  const faults = { index: null, blocks: new Map() };
   const ostnUrl = new URL('world/ostn15.mjs', base);
   async function getNoted(file, sha) {
-    const what = /ostn15\.json$/.test(file) ? 'index' : 'block';
+    const isIndex = /ostn15\.json$/.test(file), key = isIndex ? null : file.replace(/^.*\//, '').replace(/\.o15$/, '');
+    const what = isIndex ? 'index' : `block ${key}`;
+    const note = text => { if (isIndex) faults.index = text; else faults.blocks.set(key, text); };
     let res; try { res = await fetch(new URL(file, ostnUrl), { cache: 'no-cache' }); }
-    catch (e) { ostnFault = { kind: 'fetch', text: `OSTN15 ${what} could not be fetched (${e.message})` }; throw e; }
-    if (!res.ok) { ostnFault = { kind: 'fetch', text: `OSTN15 ${what} could not be fetched (HTTP ${res.status})` }; throw Error(`${file}: HTTP ${res.status}`); }
+    catch (e) { note(`OSTN15 ${what} could not be fetched (${e.message})`); throw e; }
+    if (!res.ok) { note(`OSTN15 ${what} could not be fetched (HTTP ${res.status})`); throw Error(`${file}: HTTP ${res.status}`); }
     const buf = await res.arrayBuffer(), d = await crypto.subtle.digest('SHA-256', buf);
     if ([...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('') !== sha) {
-      ostnFault = { kind: 'hash', text: `OSTN15 ${what} failed its check (hash mismatch${what === 'index' ? ', e.g. a CRLF checkout' : ''})` };
+      note(`OSTN15 ${what} failed its check (hash mismatch${isIndex ? ', e.g. a CRLF checkout' : ''})`);
       throw Error(`${file}: hash does not match`);
     }
     return buf;
   }
+  // The fault that applies to the lookup in block `key`, or null.
+  const faultFor = key => faults.index || (key != null && faults.blocks.get(key)) || null;
   const ready = Promise.all([
     import(new URL('world/bng.mjs', base).href).then(m => { BNG = m; }),
-    import(ostnUrl.href).then(m => { OSTN = m.createOstn15({ get: getNoted }); })
+    import(ostnUrl.href).then(m => { OSTNM = m; OSTN = m.createOstn15({ get: getNoted }); })
   ]);
 
   // Pure after `ready`: text -> { kind, e?, n?, lat?, lon?, query?, digits? } or null (not an address: find-go keeps it).
@@ -121,7 +127,12 @@
   let last = null;
   const ref10 = (e, n) => { try { return BNG.gridRef(e, n, 10); } catch (x) { return '—'; } };
   // Not OSTN15: either the block is genuinely not held (Scotland, sea), or OSTN15 failed to load. Say which.
-  const conv = o => o.ostn15 ? 'OSTN15' : ostnFault ? `Helmert, about 3.5 m: ${ostnFault.text} [estimated]` : 'Helmert (±5 m, no OSTN15 block here)';
+  // The reason is for THIS conversion only: its block key (the one need() used) picks the fault that applies.
+  const HELMERT = 'Helmert, about 3.5 m (OS guide, section 6.6)';
+  const conv = (o, key) => { if (o.ostn15) return 'OSTN15'; const f = faultFor(key);
+    return f ? `${HELMERT}: ${f} [estimated]` : `${HELMERT}, no OSTN15 block here`; };
+  const keyLL = (lat, lon) => OSTNM.blockKey(lat, lon);
+  const keyEN = (e, n) => { const g = BNG.bngToWgs84(e, n); return OSTNM.blockKey(g.lat, g.lon); };
 
   // text -> '' when landed, a message when not, or null when it is not an address (find-go should take it).
   async function go(S, raw) {
@@ -129,21 +140,21 @@
     const a = classify(raw); if (!a) return null;
     if (a.kind === 'latlon') {
       await OSTN.need(a.lat, a.lon); const g = OSTN.toBng(a.lat, a.lon);
-      const bng = onGrid(g.e, g.n) && a.lat > 49 && a.lat < 61.5 ? ` · BNG ${ref10(g.e, g.n)} (${conv(g)})` : ' · outside the National Grid';
+      const bng = onGrid(g.e, g.n) && a.lat > 49 && a.lat < 61.5 ? ` · BNG ${ref10(g.e, g.n)} (${conv(g, keyLL(a.lat, a.lon))})` : ' · outside the National Grid';
       land(S, a.lat, a.lon, `${a.lat.toFixed(6)}, ${a.lon.toFixed(6)} · typed (exact, WGS84)${bng}.`, 17);
       return '';
     }
     if (a.kind === 'en' || a.kind === 'gridref') {
       const p = await gridToLatLon(a.e, a.n);
       const what = a.kind === 'en' ? `E ${a.e} N ${a.n} · typed (exact)` : `${a.text} · typed grid reference; centre of its ${a.digits ? 10 ** (5 - a.digits / 2) : 100000} m square (E ${a.e} N ${a.n})`;
-      land(S, p.lat, p.lon, `${what} · ${p.lat.toFixed(7)}, ${p.lon.toFixed(7)} by ${conv(p)}.`, a.digits && a.digits <= 4 ? 13 : 17);
+      land(S, p.lat, p.lon, `${what} · ${p.lat.toFixed(7)}, ${p.lon.toFixed(7)} by ${conv(p, keyEN(a.e, a.n))}.`, a.digits && a.digits <= 4 ? 13 : 17);
       return '';
     }
     // postcode
     const r = await lookupPostcode(a.query);
     if (r.missing) return `${a.query}: not a live postcode on postcodes.io.`;
     const p = await gridToLatLon(r.e, r.n), gap = metres(p, { lat: r.lat, lon: r.lon });
-    land(S, p.lat, p.lon, `${r.postcode} · published centroid (ONSPD grid ref E ${r.e} N ${r.n}, 1 m) · ${p.lat.toFixed(6)}, ${p.lon.toFixed(6)} by ${conv(p)}`
+    land(S, p.lat, p.lon, `${r.postcode} · published centroid (ONSPD grid ref E ${r.e} N ${r.n}, 1 m) · ${p.lat.toFixed(6)}, ${p.lon.toFixed(6)} by ${conv(p, keyEN(r.e, r.n))}`
       + ` · ${gap.toFixed(1)} m from the lat/lon postcodes.io publishes · a centroid, not a building. ${CREDIT_PC}`, 17);
     return '';
   }
@@ -162,7 +173,7 @@
       if (msg) msg.textContent = t || ''; inp.blur();
     }, true);
     (function hint(k) { const i = document.getElementById('fg-in'); if (i) i.placeholder = 'go SW1A 1AA · go TQ 30 80 · go solar'; else if (k < 100) setTimeout(() => hint(k + 1), 100); })(0);
-    S.addresses = { go: t => go(S, t), fault: () => ostnFault, classify: t => ready.then(() => classify(t)), gridToLatLon: (e, n) => ready.then(() => gridToLatLon(e, n)), last: () => last };
+    S.addresses = { go: t => go(S, t), fault: () => ({ index: faults.index, blocks: Object.fromEntries(faults.blocks) }), classify: t => ready.then(() => classify(t)), gridToLatLon: (e, n) => ready.then(() => gridToLatLon(e, n)), last: () => last };
     const q = new URLSearchParams(location.search).get('addr'); if (q) go(S, q);
   })(0);
 })();
