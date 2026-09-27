@@ -40,6 +40,7 @@ h2 { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--dim
 #knob { width: 48px !important; height: 48px !important; left: 36px; top: 36px; border: 1px solid var(--line);
         background: rgba(156, 219, 255, 0.12) !important; }
 @media (pointer: fine) { #joy { display: none !important; } }
+@media (pointer: coarse) { #joy { bottom: 88px !important; } }   /* clear of the note, #where and the strip */
 
 /* Mod-drawn boxes that stay free-floating (trench panel, walk HUD, farm labels): the same panel tokens. */
 #trench-panel { background: var(--panel) !important; border: 1px solid var(--edge) !important; color: var(--text) !important; }

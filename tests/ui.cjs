@@ -100,6 +100,7 @@ async function ready(p) {
       else await p.evaluate(k => window.SIM.menu.element(k).click(), c.key);
       await p.waitForTimeout(c.key === 'sat' || c.key === 'dark' || c.key === 'wire' ? 1500 : 900);
       const s1 = await state(), l1 = await p.evaluate(k => { const e = window.SIM.menu.element(k); return (e.textContent || '').trim() + (e.classList.contains('on') ? '[on]' : ''); }, c.key);
+      if (c.key === 'fps') { await p.evaluate(() => window.SIM.menu.element('fps').click()); await p.waitForTimeout(300); }   // back out of first person
       const diff = Object.keys(s0).filter(k => s0[k] !== s1[k]).map(k => `${k} ${s0[k]}->${s1[k]}`);
       const changed = l0 !== l1 || diff.length > 0;
       clicked.push({ key: c.key, vis, changed, how, label: `${l0} -> ${l1}`, diff: diff.join(', ') });
