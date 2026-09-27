@@ -45,6 +45,25 @@ const ew = M.tableLines(0, 0, 10, 0, W);
 check('table: east-west run faces south (low edge south of high edge)', ew[0][1] < ew[1][1], `${ew[0][1]} < ${ew[1][1]}`);
 check('table: legs stand on the ground (z = 0)', ns.slice(4).every(l => l[2] === 0), 'legs');
 
+// 4. Rule R5-9 gate: LiDAR rows only where every DSM and DTM survey is later than the build year.
+const G = M.surveyGate;
+check('R5-9: survey 2022 under a 2025 build is pre-construction', !G(2025, [2022], [2022]).lidarRows && G(2025, [2022], [2022]).ground === 'pre-construction', G(2025, [2022], [2022]).reason);
+check('R5-9: survey in the build year itself is pre-construction ("same as or later")', !G(2024, [2024], [2024]).lidarRows, G(2024, [2024], [2024]).reason);
+check('R5-9: surveys 2025 and 2026 after a 2024 build allow LiDAR rows', G(2024, [2025], [2026]).lidarRows, G(2024, [2025], [2026]).reason);
+check('R5-9: one early year among later ones blocks LiDAR rows', !G(2021, [2022, 2019], [2022]).lidarRows, G(2021, [2022, 2019], [2022]).reason);
+check('R5-9: unknown build year blocks LiDAR rows', !G(null, [2025], [2025]).lidarRows, G(null, [2025], [2025]).reason);
+check('R5-9: missing DTM year blocks LiDAR rows', !G(2020, [2025], []).lidarRows, G(2020, [2025], []).reason);
+for (const f of farms) {
+  const doc = JSON.parse(fs.readFileSync(path.join(MOD, f.rows), 'utf8')), a = M.rowsAllowed(f, doc);
+  check(`${f.register}: every farm carries build year, survey years and imagery capture, each tagged`,
+    f.build_year && f.build_year.tag && f.lidar_survey_years && f.lidar_survey_years.tag && f.imagery && f.imagery.capture_date && f.imagery.tag, JSON.stringify({ b: f.build_year && f.build_year.value, s: f.lidar_survey_years, i: f.imagery && f.imagery.capture_date }));
+  check(`${f.register}: row file is imagery, drawn and labelled estimated`, a.source === 'imagery' && a.allowed && /estimated/i.test(doc.estimate || ''), `${a.source}, ${a.reason}`);
+  // Negative control: the same rows claimed as a LiDAR DSM scan must be REFUSED where the survey predates the build.
+  const lid = Object.assign({}, doc, { source: 'EA LiDAR composite DSM', method: 'DSM minus DTM height mask' }), b = M.rowsAllowed(f, lid);
+  const pre = f.lidar_survey_years.dsm.concat(f.lidar_survey_years.dtm).some(y => y <= f.build_year.value);
+  check(`${f.register}: LiDAR-claimed rows ${pre ? 'refused' : 'allowed'} by R5-9`, b.source === 'lidar' && b.allowed === !pre, `${b.source}, allowed ${b.allowed}: ${b.reason}`);
+}
+
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}  -- ${r.ev}`);
 const failed = results.filter(r => !r.ok).length; console.log(`\n${results.length - failed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

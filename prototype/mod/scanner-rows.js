@@ -7,6 +7,7 @@
 //   register point ......... derived    (public register coordinates, in scanner-rows.farms.json with its source)
 //   strip width in plan .... derived    (sample step px x metres per pixel, both from the row file / farms file)
 //   tilt, low edge height .. assumed    (TILT_DEG, LOW_M below; not read from the imagery)
+//   build year, survey years, imagery date .. derived (farms file, each with its source; rule R5-9 gate)
 //   facing side ............ assumed    (equator side of the row; east when rows run within 30 deg of north-south)
 // Plain script: pure helpers export to Node (tests/scanner-rows.test.cjs); in the browser it attaches to window.SIM.
 (function () {
@@ -57,8 +58,30 @@
     const seg = (p, q) => [p[0], p[1], p[2], q[0], q[1], q[2]], gnd = p => [p[0], p[1], 0];
     return [seg(lo0, lo1), seg(hi0, hi1), seg(lo0, hi0), seg(lo1, hi1), seg(gnd(lo0), lo0), seg(gnd(lo1), lo1), seg(gnd(hi0), hi0), seg(gnd(hi1), hi1)];
   }
+  // Rule R5-9 (survey year before scanning). The LiDAR under a farm is "pre-construction ground" when the build year
+  // is the same as or later than ANY DSM or DTM survey year under it, or when any of those years is unknown. Rows are
+  // scanned from LiDAR only when every DSM and DTM survey year is later than the build year. Otherwise rows may come
+  // only from imagery, labelled estimated. Returns { lidarRows, ground, reason }.
+  function surveyGate(buildYear, dsmYears, dtmYears) {
+    const yrs = [...(dsmYears || []), ...(dtmYears || [])], ok = y => Number.isInteger(y) && y > 1900;
+    if (!ok(buildYear)) return { lidarRows: false, ground: 'pre-construction', reason: 'build year unknown' };
+    if (!(dsmYears || []).length || !(dtmYears || []).length || !yrs.every(ok))
+      return { lidarRows: false, ground: 'pre-construction', reason: 'a DSM or DTM survey year is unknown' };
+    const early = yrs.filter(y => y <= buildYear);
+    if (early.length) return { lidarRows: false, ground: 'pre-construction',
+      reason: `LiDAR survey ${Math.min(...early)} is not later than the build year ${buildYear}` };
+    return { lidarRows: true, ground: 'post-construction', reason: `every LiDAR survey (${yrs.join(', ')}) is later than the build year ${buildYear}` };
+  }
+  // Where the row file came from: 'lidar' if its source or method names LiDAR/DSM, else 'imagery'.
+  const rowSource = doc => /lidar|dsm|dtm/i.test(`${doc.source || ''} ${doc.method || ''}`) ? 'lidar' : 'imagery';
+  // Decide whether a farm's row file may be drawn: imagery rows always (labelled estimated); LiDAR rows only past the gate.
+  function rowsAllowed(farm, doc) {
+    const ly = farm.lidar_survey_years || {}, g = surveyGate(farm.build_year && farm.build_year.value, ly.dsm, ly.dtm);
+    const src = rowSource(doc);
+    return Object.assign({ source: src, allowed: src === 'imagery' || g.lidarRows }, g);
+  }
   const stripWidthM = (farm, doc) => (farm.sample_step_px ? farm.sample_step_px.value : 3) * doc.metres_per_pixel;
-  const api = { LABEL, TILT_DEG, LOW_M, PAD_M, bbox, distToBboxM, nearestRowM, checkFarm, tableLines, stripWidthM };
+  const api = { LABEL, TILT_DEG, LOW_M, PAD_M, surveyGate, rowSource, rowsAllowed, bbox, distToBboxM, nearestRowM, checkFarm, tableLines, stripWidthM };
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; return; }
 
   // ---- browser ----
@@ -75,7 +98,9 @@
   // under each block is read near its own rows), plus a 30 m mast and a PAD_M ring at the register point.
   async function drawFarm(S, PF, farm, fly) {
     const doc = state.docs[farm.rows] || (state.docs[farm.rows] = await getJson(farm.rows));
-    const res = checkFarm(farm, doc); if (!res.ok) return res;
+    const res = checkFarm(farm, doc); res.gate = rowsAllowed(farm, doc); res.imagery = farm.imagery || null;
+    if (!res.gate.allowed) { res.ok = false; return res; }
+    if (!res.ok) return res;
     const p = farm.point, a0 = PF.placeKey(p.lat, p.lon), W = stripWidthM(farm, doc), cells = new Map();
     for (const seg of doc.rows) {
       const [[lo0, la0], [lo1, la1]] = seg, q = PF.toLocal(a0, (la0 + la1) / 2, (lo0 + lo1) / 2, 0);
@@ -112,6 +137,10 @@
       S.info(`Panel rows ${LABEL} (not measured, not a survey). ${good.length}/${out.length} farms pass the on-farm check ` +
         `(rows' box overlaps the register point within ${PAD_M} m). ` + (f0 ? `${f0.register}: ${f0.drawnRuns} runs, box ${f0.bboxM[0]} x ${f0.bboxM[1]} m, ` +
         `nearest row ${f0.nearestRowM} m from the register point. Strip width ${f0.stripWidthM} m (derived); tilt ${TILT_DEG} deg and low edge ${LOW_M} m assumed. ` : '') +
+        (f0 && f0.imagery ? `Imagery captured ${f0.imagery.capture_date}, provider accuracy ${f0.imagery.stated_accuracy_m} m. ` : '') +
+        (f0 ? `Rule R5-9: ${f0.gate.reason}, so the LiDAR here is ${f0.gate.ground} ground` +
+          (f0.gate.lidarRows ? '. ' : ' (for piles and earthworks, never scanned for rows). ') : '') +
+        out.filter(r => r.gate && !r.gate.allowed).map(r => `${r.register}: LiDAR rows refused (${r.gate.reason}). `).join('') +
         'Mast and ring mark the register point.');
       btn.textContent = `Scanner rows (${good.length}/${out.length})`;
     } catch (e) { btn.textContent = 'Scanner rows: failed'; console.error(e); }
