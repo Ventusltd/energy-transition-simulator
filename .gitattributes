@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# OSTN15 data is hash-pinned byte for byte: never convert line endings (a CRLF checkout drops the page to Helmert).
+prototype/world/data/** -text
