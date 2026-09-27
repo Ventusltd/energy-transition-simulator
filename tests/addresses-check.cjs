@@ -29,6 +29,13 @@ const server = http.createServer((q, s) => {
 const results = []; const check = (name, ok, evidence) => results.push({ name, ok: !!ok, evidence: String(evidence).slice(0, 300) });
 
 (async () => {
+  // 0. The OSTN15 index must be byte-identical to what ostn15.mjs expects. A Windows checkout with core.autocrlf=true
+  //    rewrites it with CRLF; the hash then fails and the page quietly falls back to Helmert (1-3 m off). Say so first.
+  { const want = (fs.readFileSync(path.join(ROOT, 'world', 'ostn15.mjs'), 'utf8').match(/INDEX_SHA256 = '([0-9a-f]{64})'/) || [])[1];
+    const buf = fs.readFileSync(path.join(ROOT, 'world', 'data', 'ostn15', 'ostn15.json'));
+    const got = require('crypto').createHash('sha256').update(buf).digest('hex'), crlf = buf.includes(Buffer.from([13, 10]));
+    check('OSTN15 index file is intact (hash matches, so the page uses OSTN15, not Helmert)', want && got === want,
+      got === want ? `sha256 ${got.slice(0, 12)}... matches` : `sha256 ${got.slice(0, 12)}... expected ${String(want).slice(0, 12)}...${crlf ? '; the file has CRLF line ends (git core.autocrlf): add "prototype/world/data/** -text" to .gitattributes or clone with -c core.autocrlf=false' : ''}`); }
   const launch = process.env.CHROME_LAUNCHER ? require(process.env.CHROME_LAUNCHER).launch
     : () => require('playwright').chromium.launch({ channel: process.env.CI ? undefined : 'chrome', args: process.env.CI ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [] });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -89,6 +96,14 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
   const typed = await p.evaluate(() => ({ info: document.getElementById('info').textContent, msg: document.getElementById('fg-msg').textContent }));
   check('typing a grid ref in the find box lands there', /TQ 30624 78388/.test(typed.info) && typed.msg === '', typed.info);
   await p.screenshot({ path: path.join(OUT, '5-typed-box.png') });
+  // 5. Walk and fly where we landed: the landing must hold while the camera changes mode.
+  const hold = async (key, shot) => { const t = await p.evaluate(() => window.SIM.addresses.last());
+    await p.evaluate(() => document.activeElement && document.activeElement.blur()); await p.keyboard.press(key); await p.waitForTimeout(1200); await p.waitForFunction(() => !window.SIM.map.isMoving(), null, { timeout: 30000 }); await p.waitForTimeout(2000);
+    const v = await p.evaluate(() => { const c = window.SIM.map.getCenter(); return { lat: c.lat, lon: c.lng, pitch: window.SIM.map.getPitch(), zoom: window.SIM.map.getZoom() }; });
+    await p.screenshot({ path: path.join(OUT, shot + '.png') }); return { v, off: t ? metres(v, t) : NaN }; };
+  const w = await hold('1', '7-walk-at-gridref'), f = await hold('2', '8-drone-at-gridref');
+  check('walk (1) and drone (2) keep the landed spot', w.v.pitch > 30 && f.v.pitch > 20 && w.off < 0.5 && f.off < 0.5,
+    `walk pitch ${w.v.pitch.toFixed(0)} zoom ${w.v.zoom.toFixed(1)} off ${w.off.toFixed(3)} m; drone pitch ${f.v.pitch.toFixed(0)} zoom ${f.v.zoom.toFixed(1)} off ${f.off.toFixed(3)} m`);
   await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(1500); await p.screenshot({ path: path.join(OUT, '6-phone.png') });
   check('no page errors', errs.length === 0, errs.join(' | ') || 'none');
 
