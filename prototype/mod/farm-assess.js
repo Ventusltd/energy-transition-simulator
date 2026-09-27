@@ -177,13 +177,29 @@
   }
   // Round 7: #info is shared. Before the farmer result lifts it, record the inline styles and class it will change;
   // when another module writes #info (its text no longer starts with the farmer's first line), put them back exactly.
+  // Round 8: the LAND line names the box by its OS grid reference (box centre), which a farmer can read, not the internal
+  // c<e>_<n> key (kept unchanged for the cache). Letters: 500 km then 100 km squares, I skipped. Digits are TRUNCATED, as
+  // the OS convention says (the reference names the square the point lies in). Outside the grid (0-700 km E, 0-1300 km N)
+  // or not a number: null, never a wrong square.
+  function gridRef(e, n, digits) {
+    var d = digits || 8; if (d % 2 || d < 2 || d > 10) return null;
+    if (typeof e !== 'number' || typeof n !== 'number' || !isFinite(e) || !isFinite(n) || e < 0 || n < 0 || e >= 700000 || n >= 1300000) return null;
+    var e1 = Math.floor(e / 100000), n1 = Math.floor(n / 100000);
+    var l1 = (19 - n1) - (19 - n1) % 5 + Math.floor((e1 + 10) / 5), l2 = (19 - n1) * 5 % 25 + e1 % 5;
+    if (l1 > 7) l1++; if (l2 > 7) l2++;
+    var h = d / 2, f = function (v) { return String(Math.floor((v % 100000) / Math.pow(10, 5 - h)) + Math.pow(10, h)).slice(1); };
+    return String.fromCharCode(65 + l1, 65 + l2) + ' ' + f(e) + ' ' + f(n);
+  }
+  // First words of the LAND line. The box centre's 8-figure reference (10 m square) is DERIVED from the snapped box.
+  function landHead(b) { var ce = (b.e0 + b.e1) / 2, cn = (b.n0 + b.n1) / 2, g = gridRef(ce, cn, 8);
+    return 'LAND: site box ' + (g ? g + ' [derived, box centre, OS grid ref]' : (ce / 1000) + ',' + (cn / 1000) + ' km BNG [derived, box centre; outside the lettered OS grid]'); }
   var INFO_KEYS = ['whiteSpace', 'bottom', 'maxHeight', 'overflowY', 'maxWidth', 'boxSizing', 'zIndex', 'background'], FARM_HEAD = 'LAND: site box';
   function snapInfo(el) { var st = {}; INFO_KEYS.forEach(function (k) { st[k] = el.style[k]; }); return { style: st, lift: el.classList.contains('fa-lift') }; }
   function isFarmText(t) { return String(t || '').indexOf(FARM_HEAD) === 0; }
   function restoreInfo(prev, el) { INFO_KEYS.forEach(function (k) { el.style[k] = prev.style[k]; }); if (!prev.lift) el.classList.remove('fa-lift'); }
   // Called on each #info mutation while the farmer result is lifted. Returns true when it restored (the watch is then over).
   function infoChanged(prev, el) { if (!prev || isFarmText(el.textContent)) return false; restoreInfo(prev, el); return true; }
-  var core = { INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
+  var core = { gridRef: gridRef, landHead: landHead, INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
@@ -272,7 +288,7 @@
   }
   function report(b, rec, res, sub, c, fz, fzErr) {
     var pct = function (x) { return (100 * x).toFixed(1) + '%'; };
-    var lines = ['LAND: site box ' + (b.e0 / 1000) + ',' + (b.n0 / 1000) + ' km (2,048 m, centred on arrival, edges on 256 m BNG grid, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
+    var lines = [landHead(b) + ' (2,048 m, centred on arrival, edges on 256 m BNG grid, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
     res.rows.forEach(function (r) { lines.push('  ' + r.grade + ': ' + pct(r.share) + ' (' + r.ha.toFixed(0) + ' ha) [derived]'); });
     lines.push(grade3Text(res, false) + (res.grade3Share > 0 ? '' : ' Not a field survey.'));
     if (rec.exceeded) lines.push('  WARNING: service transfer limit hit; shares are incomplete.');
@@ -284,7 +300,7 @@
     root.__farmAssess = { box: b, centreBng: { e: cb.e, n: cb.n }, edgeMarginM: edgeMargin(b, cb.e, cb.n), rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at,
       flood: fz ? { fz3: { ha: fz.fz3.ha, share: fz.fz3.share }, fz2: { ha: fz.fz2.ha, share: fz.fz2.share }, exceeded: fz.exceeded, fetchedAt: fz.at, ms: fz.ms } : null,
       floodError: fz ? null : (fzErr || 'no answer'), floodLine: floodText(fz, innerWidth < 600, fzErr) };
-    if (innerWidth < 600) lines = [lines[0].replace(' (2,048 m, centred on arrival, edges on 256 m BNG grid, ', ' (centred on arrival, ').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
+    if (innerWidth < 600) lines = [lines[0].replace(' [derived, box centre, OS grid ref]', ' [derived]').replace(' (2,048 m, centred on arrival, edges on 256 m BNG grid, ', ' (centred on arrival, ').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
         [grade3Text(res, true), floodText(fz, true, fzErr), gridText(sub, true),
          'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '')]);

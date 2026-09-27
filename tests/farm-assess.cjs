@@ -158,4 +158,24 @@ T('(info7) negative: a farmer re-render (text still starts with the LAND line) d
   const r = A.infoChanged(prev, el), r0 = A.infoChanged(null, el);
   return [!r && !r0 && el.classList.contains('fa-lift') && el.style.zIndex === '5' && el.style.background === 'rgba(0,10,20,.88)' && !A.isFarmText(' ' + FARM), JSON.stringify(el.style)]; });
 
+// 13. Round 8: the LAND line names the box by its OS grid reference (box centre), not the internal key.
+// Known points: OS published references (Ben Nevis summit trig NN 16667 71278; TF, TQ, SU and NT 100 km squares).
+T('(gref8) TF: box centre 520960,333824 gives TF 2096 3382 (8-figure, truncated)', () => { const g = A.gridRef(520960, 333824); return [g === 'TF 2096 3382', g]; });
+T('(gref8) TQ: Trafalgar Square about 530000,180400 gives TQ 3000 8040; SU 441234,112345 gives SU 4123 1234', () => {
+  const a = A.gridRef(530000, 180400), c = A.gridRef(441234, 112345); return [a === 'TQ 3000 8040' && c === 'SU 4123 1234', a + ' | ' + c]; });
+T('(gref8) NT and 10-figure: Edinburgh 325000,673000 gives NT 2500 7300; Ben Nevis 216667,771278 gives NN 16667 71278', () => {
+  const a = A.gridRef(325000, 673000), c = A.gridRef(216667, 771278, 10); return [a === 'NT 2500 7300' && c === 'NN 16667 71278', a + ' | ' + c]; });
+T('(gref8) corners and the skipped I: 0,0 is SV; 699999,1299999 is JM; HP (Shetland) 460000,1210000; no square uses I', () => {
+  const a = A.gridRef(0, 0), c = A.gridRef(699999, 1299999), d = A.gridRef(460000, 1210000);
+  let noI = true; for (let e = 50000; e < 700000; e += 100000) for (let n = 50000; n < 1300000; n += 100000) if (/I/.test(A.gridRef(e, n).slice(0, 2))) noI = false;
+  return [a === 'SV 0000 0000' && c === 'JM 9999 9999' && d === 'HP 6000 1000' && noI, [a, c, d, noI].join(' | ')]; });
+T('(gref8) negative: outside the grid or not a number gives null, never a wrong square', () => {
+  const bad = [[-1, 300000], [300000, -0.5], [700000, 300000], [300000, 1300000], [NaN, 1], [1, Infinity], ['520960', 333824], [520960, 333824, 7], [520960, 333824, 12]];
+  const out = bad.map(x => A.gridRef(x[0], x[1], x[2])); return [out.every(v => v === null), JSON.stringify(out)]; });
+T('(gref8) LAND line head: grid ref of the centred box, tagged [derived]; still starts with FARM_HEAD; cache key unchanged', () => {
+  const bx = A.centredBox(520900, 333800), h = A.landHead(bx);
+  return [bx.key === 'c520960_333824' && h === 'LAND: site box TF 2096 3382 [derived, box centre, OS grid ref]' && A.isFarmText(h + ' (centred on arrival, 419 ha)') && !/519\.936/.test(h), bx.key + ' | ' + h]; });
+T('(gref8) negative: a box outside the lettered grid falls back to km and says so, never a letter pair', () => {
+  const h = A.landHead({ e0: -2048, n0: 300000, e1: 0, n1: 302048 }); return [A.isFarmText(h) && /km BNG \[derived, box centre; outside the lettered OS grid\]/.test(h) && !/[A-Z]{2} \d/.test(h), h]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
