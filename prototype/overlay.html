@@ -13,8 +13,8 @@
   #knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:rgba(160,220,255,.6)}
 </style></head><body>
 <div id="map"></div>
-<div id="bar"><button id="sat" class="on">Satellite</button><button id="dark">Dark</button><button id="tilt">3D tilt</button><button id="here">Build here</button><button id="survey">Survey</button><button id="rows">Solar rows</button><button id="walk">Walk</button><button id="drone">Drone</button><button id="map2d">Map</button><span id="spd" style="align-self:center;font:13px sans-serif;color:#dfe;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:6px"></span></div>
-<div id="joy"><div id="knob"></div></div><div id="info">Walk (1), Drone (2), Map (3). W A S D or the joystick to move, Q and E to turn, R and F to tilt, Shift for fast. "Solar rows" stands up the real mapped panel rows (OpenStreetMap) in 3D. "Build here" drops a 3D wireframe solar block at the map centre, fixed in real coordinates. "Survey" shows the onsite ground grid (LiDAR topography plugs in here).</div>
+<div id="bar"><button id="sat" class="on">Satellite</button><button id="dark">Dark</button><button id="tilt">3D tilt</button><button id="here">Build here</button><button id="survey">Survey</button><button id="rows">Solar rows</button><button id="pylons">Pylons</button><button id="walk">Walk</button><button id="drone">Drone</button><button id="map2d">Map</button><span id="spd" style="align-self:center;font:13px sans-serif;color:#dfe;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:6px"></span></div>
+<div id="joy"><div id="knob"></div></div><div id="here-readout" style="position:absolute;right:8px;top:62px;z-index:2;font:13px monospace;color:#dfe;background:rgba(0,0,0,.65);padding:6px 8px;border-radius:6px"></div><div id="info">Walk (1), Drone (2), Map (3). W A S D or the joystick to move, Q and E to turn, R and F to tilt, Shift for fast. "Solar rows" stands up the real mapped panel rows (OpenStreetMap) in 3D. "Build here" drops a 3D wireframe solar block at the map centre, fixed in real coordinates. "Survey" shows the onsite ground grid (LiDAR topography plugs in here).</div>
 <script>
 // Proof: GridAtlas is the ground (its satellite and dark basemaps, its grid layers), and the 3D wireframe is drawn
 // INSIDE the map's own camera as a custom WebGL layer, so it stays fixed to real coordinates when the map
@@ -156,6 +156,43 @@ async function loadRows() {
   } catch (e) { bt.textContent = 'Rows: try again'; }
 }
 document.getElementById('rows').onclick = loadRows;
+
+
+// ---- Pylons from GridAtlas's own line vertices (exact coordinates), stood up as 3D wireframe towers,
+// with conductors at arm height. Heights are illustrative by voltage class. Only lines in view, zoom 14+.
+const PYLON_H = { '400': 50, '275': 45, '132': 27 };
+let pylonsOn = false;
+function tower(h) { const L = [], b = h * 0.12, t = h * 0.03, arm = h * 0.8, w = h * 0.3;
+  const legs = [[-b, -b], [b, -b], [b, b], [-b, b]], top = [[-t, -t], [t, -t], [t, t], [-t, t]];
+  for (let i = 0; i < 4; i++) { L.push([legs[i][0], legs[i][1], 0, top[i][0], top[i][1], h]); const j = (i + 1) % 4; L.push([legs[i][0], legs[i][1], 0, legs[j][0], legs[j][1], 0]); }
+  L.push([-w, 0, arm, w, 0, arm], [-w * 0.8, 0, arm - h * 0.15, w * 0.8, 0, arm - h * 0.15]);
+  return L; }
+function buildPylons() {
+  for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].pylon) blocks.splice(i, 1);
+  if (!pylonsOn || map.getZoom() < 14) { map.triggerRepaint(); return 0; }
+  const b = map.getBounds(); let n = 0;
+  for (const kv of Object.keys(PYLON_H)) {
+    if (!map.getSource('g' + kv)) continue;
+    const h = PYLON_H[kv], seen = new Set();
+    for (const f of map.querySourceFeatures('g' + kv)) {
+      const lines = f.geometry.type === 'LineString' ? [f.geometry.coordinates] : f.geometry.coordinates;
+      for (const line of lines) for (let i = 0; i < line.length; i++) {
+        const [lon, lat] = line[i]; if (!b.contains([lon, lat])) continue;
+        const key = lon.toFixed(6) + lat.toFixed(6); if (seen.has(key)) continue; seen.add(key);
+        const L = tower(h);
+        if (i + 1 < line.length) { const [lon2, lat2] = line[i + 1], k = 111320 * Math.cos(lat * Math.PI / 180);
+          const dx = (lon2 - lon) * k, dy = (lat2 - lat) * 111320; if (Math.hypot(dx, dy) < 800) for (const o of [-h * 0.3, h * 0.3]) L.push([o, 0, h * 0.8, dx + o, dy, h * 0.8]); }
+        blocks.push({ lon, lat, lines: L, pylon: true }); n++; if (n > 600) break;
+      }
+    }
+  }
+  map.triggerRepaint(); return n;
+}
+document.getElementById('pylons').onclick = e => { pylonsOn = !pylonsOn; e.target.classList.toggle('on', pylonsOn); const n = buildPylons(); e.target.textContent = pylonsOn ? `Pylons (${n})` : 'Pylons'; };
+map.on('moveend', () => { if (pylonsOn) { const n = buildPylons(); document.getElementById('pylons').textContent = `Pylons (${n})`; } });
+// Exact position readout: the map centre (where you stand), from GridAtlas's own coordinates.
+function readout() { const c = map.getCenter(); document.getElementById('here-readout').textContent = `${c.lat.toFixed(6)}, ${c.lng.toFixed(6)}  z${map.getZoom().toFixed(1)}  heading ${Math.round((map.getBearing() + 360) % 360)}°`; }
+map.on('move', readout); map.on('load', readout);
 
 map.on('moveend', ground); map.on('zoomend', ground);
 map.on('load', () => { addGrid(); block(start[0], start[1]); ground(); });
