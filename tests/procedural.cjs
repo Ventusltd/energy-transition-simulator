@@ -50,7 +50,18 @@ async function browser() {
   check('6502: table positions kept out reported', clr && clr.skipped > 0 && /table positions kept out of overhead line zones \(illustrative\)/.test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
   console.log('CLEARANCE 6502', JSON.stringify(clr));
   const info = await p.textContent('#info');
-  check('label says procedural estimate', /procedural estimate/.test(info) && /0 measured samples/.test(info), info);
+  const N = await p.evaluate(() => window.__procedural.calibN);
+  check('label says procedural estimate with the real calibration N', Number.isInteger(N) && info.includes(`procedural estimate (formula calibrated on ${N} measured samples`), `N=${N}: ${info.slice(0, 200)}`);
+  // The formula readout, checked against what was drawn (not against itself).
+  const fm = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); return f && { ...f.geom.formula, mw: f.mw }; });
+  const gaps = fm ? fm.rowsV.slice(1).map((v, i) => v - fm.rowsV[i]).filter(d => d > 0.5 * fm.pitchM && d < 1.5 * fm.pitchM).sort((a, b) => a - b) : [];
+  const drawnPitch = gaps.length ? gaps[Math.floor(gaps.length / 2)] : NaN;
+  check('drawn row pitch equals the published pitch within 1 cm', fm && gaps.length > 20 && Math.abs(drawnPitch - fm.pitchM) < 0.01,
+    fm && `drawn median ${drawnPitch.toFixed(4)} m over ${gaps.length} row gaps; published ${fm.pitchM.toFixed(4)} m (${fm.pitchTag})`);
+  const shoe = fm ? Math.abs(fm.boundary.reduce((a, q, i) => { const r = fm.boundary[(i + 1) % fm.boundary.length]; return a + q[0] * r[1] - r[0] * q[1]; }, 0)) / 2 / 1e4 : NaN;
+  check('site box area equals MW divided by the published MW/ha within 1%', fm && Math.abs(shoe - fm.mw / fm.mwPerHa) / shoe < 0.01,
+    fm && `boundary ${shoe.toFixed(2)} ha; ${fm.mw} MW / ${fm.mwPerHa.toFixed(3)} MW/ha = ${(fm.mw / fm.mwPerHa).toFixed(2)} ha (${fm.mwPerHaTag})`);
+  console.log('FORMULA 6502', JSON.stringify(fm && { pitchM: fm.pitchM, areaHa: fm.areaHa, mwPerHa: fm.mwPerHa, N: fm.N, rows: fm.rowsV.length, drawnPitch }));
   await shot('1-solar-top');
   await p.click('#wire'); await p.waitForTimeout(2500); await shot('2-solar-wire');
   await p.click('#walk'); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('3-solar-walk');

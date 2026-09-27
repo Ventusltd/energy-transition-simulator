@@ -4,14 +4,19 @@
 // engine/plant-layout.mjs layoutPlantAsync), on a square of open land sized by plant.js's open-land rule. No new generator.
 // Battery storage: a container yard sized by a stated, ASSUMED rule (below), since the engine has no battery generator.
 // EV forecourts: not drawn, because no public register of forecourts with capacity is loaded here (said on screen).
-// Calibration, said as it is: the six measured samples hold ground (DTM) only, no surface (DSM), so no layout dimension
-// is calibrated on a measured sample yet (N = 0). Every dimension is an engine default or an assumption, and says so.
+// Calibration, said as it is: see CALIB below. No layout dimension is calibrated on a measured sample yet (N = 0).
+// Every dimension is an engine default or an assumption, and says so.
 // Arrival and view only: the register index is the overlay's own local file; nothing is fetched on movement.
 (function () {
   'use strict';
   const here = document.currentScript && document.currentScript.src ? document.currentScript.src : location.href;
   const E = n => new URL('engine/' + n, here).href;
-  const LABEL = 'procedural estimate (engine formulas; calibrated on 0 measured samples: the 6 samples hold ground only)';
+  // Calibration state, said as it is (round 3): the six measured samples hold ground heights only (no row pitch, no fenced
+  // area), so N = 0 measured samples calibrate the solar formula. The one imagery row reading that passed
+  // (scanner-rows.calib.json, N = 1, derived from imagery, estimated) is an east-west tent farm: its pitch is a tent
+  // period, not a south row pitch, so it is not used for south rows. Pitch and MW per hectare stay engine-derived and tagged.
+  const CALIB = { N: 0, pitchTag: 'engine default (gcr formula), not calibrated', mwPerHaTag: 'derived from the engine site box, not calibrated' };
+  const LABEL = `procedural estimate (formula calibrated on ${CALIB.N} measured samples: the 6 samples hold ground only; the 1 imagery row reading is an east-west tent farm, not used for south rows)`;
   const MAX_ASSETS = 4, MIN_ZOOM = 12.5;
   // Battery yard, ASSUMED (not measured, not cited): 2 h duration, 3.7 MWh per 20 ft container (6.06 x 2.44 x 2.9 m),
   // containers in rows of 10 at 3 m gaps, rows 6 m apart, fence 10 m outside.
@@ -78,9 +83,13 @@
       for (let q = 0; q < t.length; q += 6) { const ua = t[q], va = t[q + 1], ub = ua + (res.tableLen?.[q / 6] ?? T.lenU), vb = va + T.depth;
         tb.push([Fr.en(ua, va), Fr.en(ub, va), Fr.en(ub, vb), Fr.en(ua, vb)]); }
       for (const s of res.stations) { const [e, n] = Fr.en(s.u, s.v); box(out, e - 6, n - 1.5, 12, 3, 0, 3); }
-      const kept = (res.skipped && res.skipped.ohl) || 0;
-      return { lines: out, geom: { ohl, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept },
-        text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, pitch ${T.pitch.toFixed(2)} m (engine default), ${res.built.stations} stations; `
+      const kept = (res.skipped && res.skipped.ohl) || 0, areaHa = side * side / 1e4, mwPerHa = r.mw / areaHa;
+      const rowsV = [...new Set(Array.from({ length: t.length / 6 }, (_, i) => Math.round(t[6 * i + 1] * 1000) / 1000))].sort((a, b) => a - b);
+      return { lines: out, geom: { ohl, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
+          formula: { pitchM: T.pitch, pitchTag: CALIB.pitchTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
+            boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], rowsV } },
+        text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, south rows at pitch ${T.pitch.toFixed(2)} m (${CALIB.pitchTag}), `
+          + `site box ${areaHa.toFixed(1)} ha = ${mwPerHa.toFixed(2)} MW/ha (${CALIB.mwPerHaTag}), ${res.built.stations} stations; `
           + (ohl.length ? `${kept.toLocaleString('en-GB')} table positions kept out of overhead line zones (illustrative)` : 'no overhead line data in view: clearance not applied')
           + `; ${SQUARE}` };
     }
@@ -122,7 +131,7 @@
         btn.textContent = `Procedural (${shown.length})`;
         SIM.info(shown.length ? `${LABEL}. At register points, sized from register capacity: ${texts.join('; ')}. EV forecourts: no register loaded, not drawn.`
           : `Procedural: no register solar or storage in view${map.getZoom() < MIN_ZOOM ? ' (zoom in to ' + MIN_ZOOM + ')' : ''}. ${LABEL}.`);
-        window.__procedural = { label: LABEL, shown: near.map(r => ({ ref: r.ref, tech: r.tech, mw: r.mw, lat: r.lat, lon: r.lon, segments: cache.get(r.ref).n, text: cache.get(r.ref).text, geom: cache.get(r.ref).geom })) };
+        window.__procedural = { label: LABEL, calibN: CALIB.N, shown: near.map(r => ({ ref: r.ref, tech: r.tech, mw: r.mw, lat: r.lat, lon: r.lon, segments: cache.get(r.ref).n, text: cache.get(r.ref).text, geom: cache.get(r.ref).geom })) };
       } catch (e) { SIM.info('Procedural: ' + e.message); }
       busy = false; if (pending) { pending = false; refresh(); }
     }
