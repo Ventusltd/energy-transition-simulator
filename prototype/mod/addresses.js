@@ -28,10 +28,26 @@
   const GRIDREF = /^[A-HJ-Z]{2}\s*[\d\s]*$/i;
   const onGrid = (e, n) => Number.isFinite(e) && Number.isFinite(n) && e >= 0 && e < 700000 && n >= 0 && n < 1300000;
 
-  let BNG = null, OSTN = null;
+  let BNG = null, OSTN = null, ostnFault = null;
+  // ostn15.mjs's need() turns any load failure into "no block here" (false). So hand it our own fetcher, the same
+  // fetch-and-SHA-256 check as its default, which also records WHY a load failed: the landing label must then name
+  // the fault (index failed its check / could not be fetched), never claim that the block is simply not held.
+  const ostnUrl = new URL('world/ostn15.mjs', base);
+  async function getNoted(file, sha) {
+    const what = /ostn15\.json$/.test(file) ? 'index' : 'block';
+    let res; try { res = await fetch(new URL(file, ostnUrl), { cache: 'no-cache' }); }
+    catch (e) { ostnFault = { kind: 'fetch', text: `OSTN15 ${what} could not be fetched (${e.message})` }; throw e; }
+    if (!res.ok) { ostnFault = { kind: 'fetch', text: `OSTN15 ${what} could not be fetched (HTTP ${res.status})` }; throw Error(`${file}: HTTP ${res.status}`); }
+    const buf = await res.arrayBuffer(), d = await crypto.subtle.digest('SHA-256', buf);
+    if ([...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('') !== sha) {
+      ostnFault = { kind: 'hash', text: `OSTN15 ${what} failed its check (hash mismatch${what === 'index' ? ', e.g. a CRLF checkout' : ''})` };
+      throw Error(`${file}: hash does not match`);
+    }
+    return buf;
+  }
   const ready = Promise.all([
     import(new URL('world/bng.mjs', base).href).then(m => { BNG = m; }),
-    import(new URL('world/ostn15.mjs', base).href).then(m => { OSTN = m.createOstn15(); })
+    import(ostnUrl.href).then(m => { OSTN = m.createOstn15({ get: getNoted }); })
   ]);
 
   // Pure after `ready`: text -> { kind, e?, n?, lat?, lon?, query?, digits? } or null (not an address: find-go keeps it).
@@ -104,7 +120,8 @@
   }
   let last = null;
   const ref10 = (e, n) => { try { return BNG.gridRef(e, n, 10); } catch (x) { return '—'; } };
-  const conv = o => o.ostn15 ? 'OSTN15' : 'Helmert (±5 m, no OSTN15 block here)';
+  // Not OSTN15: either the block is genuinely not held (Scotland, sea), or OSTN15 failed to load. Say which.
+  const conv = o => o.ostn15 ? 'OSTN15' : ostnFault ? `Helmert, about 3.5 m: ${ostnFault.text} [estimated]` : 'Helmert (±5 m, no OSTN15 block here)';
 
   // text -> '' when landed, a message when not, or null when it is not an address (find-go should take it).
   async function go(S, raw) {
@@ -145,7 +162,7 @@
       if (msg) msg.textContent = t || ''; inp.blur();
     }, true);
     (function hint(k) { const i = document.getElementById('fg-in'); if (i) i.placeholder = 'go SW1A 1AA · go TQ 30 80 · go solar'; else if (k < 100) setTimeout(() => hint(k + 1), 100); })(0);
-    S.addresses = { go: t => go(S, t), classify: t => ready.then(() => classify(t)), gridToLatLon: (e, n) => ready.then(() => gridToLatLon(e, n)), last: () => last };
+    S.addresses = { go: t => go(S, t), fault: () => ostnFault, classify: t => ready.then(() => classify(t)), gridToLatLon: (e, n) => ready.then(() => gridToLatLon(e, n)), last: () => last };
     const q = new URLSearchParams(location.search).get('addr'); if (q) go(S, q);
   })(0);
 })();

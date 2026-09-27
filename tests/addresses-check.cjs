@@ -21,11 +21,18 @@ const TP = [['TP03', 50.43885825610, -4.10864563561, 250359.811, 62016.569], ['T
   ['TP11', 51.89436637350, 0.89724327012, 599445.590, 225722.826], ['TP12', 52.25529381630, -2.15458614387, 389544.190, 261912.153]];
 fs.mkdirSync(OUT, { recursive: true });
 const metres = (a, b) => { const k = Math.cos((a.lat + b.lat) * Math.PI / 360); return Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * k); };
-const server = http.createServer((q, s) => {
+// mode 'crlf' serves the OSTN15 index with CRLF line ends (what a Windows autocrlf checkout holds); mode 'http500'
+// answers it with HTTP 500. Both must make the landing label name the fault, not "no OSTN15 block here".
+const serve = mode => http.createServer((q, s) => {
   const f = path.join(ROOT, decodeURIComponent(q.url.split('?')[0]).replace(/^\/+/, '') || 'overlay.html');
   if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end(); }
+  if (mode && path.basename(f) === 'ostn15.json') {
+    if (mode === 'http500') { s.writeHead(500); return s.end(); }
+    s.writeHead(200, { 'Content-Type': 'application/json' }); return s.end(fs.readFileSync(f, 'utf8').replace(/\r?\n/g, '\r\n'));
+  }
   s.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(s);
 });
+const server = serve(null);
 const results = []; const check = (name, ok, evidence) => results.push({ name, ok: !!ok, evidence: String(evidence).slice(0, 300) });
 
 (async () => {
@@ -77,7 +84,7 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
 
   // 2. Grid references cut from the OS test points.
   const gr = await p.evaluate(tp => import('./world/bng.mjs').then(B => tp.map(([id, lat, lon, E, N]) => [id, lat, lon, E, N, B.gridRef(E, N, 10)])), TP);
-  let worstGr = 0;
+  let worstGr = 0, tp09 = null;
   for (const [id, lat, lon, E, N, ref] of gr) {
     const L = await goAndLand('go ' + ref);
     const want = Math.hypot(Math.floor(E) + 0.5 - E, Math.floor(N) + 0.5 - N), got = metres(L, { lat, lon }), err = Math.abs(got - want);
@@ -86,7 +93,7 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
     worstGr = Math.max(worstGr, err, cen);
     check(`grid ref ${ref} (OS ${id}) lands exactly`, L.msg === '' && err <= 0.02 && cen <= 0.02 && backRef === ref && back.engine === 'OSTN15',
       `${got.toFixed(3)} m from OS ${id} (square centre is ${want.toFixed(3)} m away); readback ${backRef} by ${back.engine}, ${cen.toFixed(4)} m from square centre`);
-    if (id === 'TP09') { await p.waitForTimeout(2500); await p.screenshot({ path: path.join(OUT, '4-gridref-TP09.png') }); }
+    if (id === 'TP09') { tp09 = { err, cen, engine: back.engine, info: L.target && L.target.text }; await p.waitForTimeout(2500); await p.screenshot({ path: path.join(OUT, '4-gridref-TP09.png') }); }
   }
   // 3. Not an address: find-go keeps it.
   check('non-address text is left to find-go', await p.evaluate(() => window.SIM.addresses.classify('solar 50').then(x => x === null)), 'classify("solar 50") === null');
@@ -106,6 +113,30 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
     `walk pitch ${w.v.pitch.toFixed(0)} zoom ${w.v.zoom.toFixed(1)} off ${w.off.toFixed(3)} m; drone pitch ${f.v.pitch.toFixed(0)} zoom ${f.v.zoom.toFixed(1)} off ${f.off.toFixed(3)} m`);
   await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(1500); await p.screenshot({ path: path.join(OUT, '6-phone.png') });
   check('no page errors', errs.length === 0, errs.join(' | ') || 'none');
+  check('normal serve: TP09 lands by OSTN15 within 0.01 m', tp09 && tp09.engine === 'OSTN15' && / by OSTN15\./.test(tp09.info) && tp09.err <= 0.01 && tp09.cen <= 0.01,
+    tp09 ? `err ${tp09.err.toFixed(4)} m, readback ${tp09.cen.toFixed(4)} m by ${tp09.engine}` : 'TP09 not run');
+
+  // 6. OSTN15 fails to load: the label must name the fault and tag the value estimated, not claim "no block here".
+  const faultRun = async (mode, want, shots) => {
+    const srv = serve(mode); await new Promise(r => srv.listen(0, '127.0.0.1', r));
+    const q = await b.newPage({ viewport: { width: 1280, height: 800 } }), qerr = []; q.on('pageerror', e => qerr.push(e.message));
+    await q.route('**/mod/index.json', async r => { const list = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'index.json'), 'utf8'));
+      r.fulfill({ contentType: 'application/json', body: JSON.stringify(list.includes('addresses') ? list : [...list, 'addresses']) }); });
+    await q.goto(`http://127.0.0.1:${srv.address().port}/overlay.html?lat=51.5&lon=-0.12`, { waitUntil: 'load' });
+    await q.waitForFunction(() => window.SIM && window.SIM.addresses, null, { timeout: 30000 });
+    await q.click('#fg-in'); await q.fill('#fg-in', 'TQ 30624 78388'); await q.keyboard.press('Enter');
+    await q.waitForTimeout(500); await q.waitForFunction(() => !window.SIM.map.isMoving(), null, { timeout: 30000 }); await q.waitForTimeout(2500);
+    const got = await q.evaluate(() => ({ info: document.getElementById('info').textContent, last: window.SIM.addresses.last(), fault: window.SIM.addresses.fault() }));
+    const txt = got.last ? got.last.text : '';
+    check(`OSTN15 ${mode}: typed grid ref label names the fault`, txt.includes('Helmert, about 3.5 m: ' + want) && txt.includes('[estimated]') && !/no OSTN15 block here/.test(txt) && !/ by OSTN15\./.test(txt),
+      txt || JSON.stringify(got));
+    if (shots) { await q.screenshot({ path: path.join(OUT, shots[0] + '.png') });
+      await q.setViewportSize({ width: 390, height: 844 }); await q.waitForTimeout(1500); await q.screenshot({ path: path.join(OUT, shots[1] + '.png') }); }
+    check(`OSTN15 ${mode}: no page errors`, qerr.length === 0, qerr.join(' | ') || 'none');
+    await q.close(); srv.close();
+  };
+  await faultRun('crlf', 'OSTN15 index failed its check', ['9-ostn15-crlf-fault-desktop', '10-ostn15-crlf-fault-phone390']);
+  await faultRun('http500', 'OSTN15 index could not be fetched', null);
 
   await b.close(); server.close();
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ worstPostcodeMetres: worstPc, worstGridRefMetres: worstGr, results }, null, 1));
