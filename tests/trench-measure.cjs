@@ -39,7 +39,7 @@ const LAT = +(process.env.TLAT || 51.215), LON = +(process.env.TLON || -1.78);
   const FARM = { 33: { 1: '33kv-1-agri', 2: '33kv-2-agri' }, 132: { 1: '132kv-1-dno@farmland', 2: '132kv-2@farmland' } };
   check('trench auto: farmland section drawn (default land, labelled assumed)', auto.section === (FARM[first.c.kv] || {})[first.c.n] && auto.land === 'farmland' && auto.land_prov === 'assumed', `${auto.section} for ${first.c.kv} kV x ${first.c.n}, land ${auto.land} (${auto.land_prov})`);
   const cov = auto.rows.find(r => r.what === 'cover');
-  check('trench auto on farmland: cover 0.91 m (S1 Table 5.4.1), cited', cov && cov.value_m === 0.91 && cov.prov === 'cited' && cov.pass, JSON.stringify(cov));
+  check('trench auto on farmland: cover 0.91 m (S1 Table 5.4.1), cited', cov && cov.value_m === 0.91 && /^cited/.test(cov.prov) && cov.pass, JSON.stringify(cov));
   check('the read-back check is named "consistency"', auto.name === 'consistency' && /^Trench consistency (PASS|FAIL)/.test(auto.text) && /not a site survey/.test(auto.text), auto.text.slice(0, 120));
   check('trench auto: drawn = cited within 1 cm at every rib', auto.ok && auto.ribs > 0, auto.text);
   for (const r of auto.rows) check(`  ${r.what} ${r.value_m} m (${r.prov})`, r.pass, `worst ${(r.worst_err_m * 1000).toFixed(3)} mm`);
@@ -65,6 +65,26 @@ const LAT = +(process.env.TLAT || 51.215), LON = +(process.env.TLON || -1.78);
   const foot = await p.evaluate(() => document.getElementById('trench-foot').textContent);
   check('panel shows the land class and "Consistency", no "typical"', /Land: farmland \[typed\]/.test(foot) && /Consistency PASS/.test(foot) && !/typical/i.test(foot), foot.slice(0, 300));
   await p.screenshot({ path: path.join(OUT, '2b-farmland-walk-z22.png') });
+  // Farmland cover sources disagree: S2 (parsed from the catalogue's own source text) asks more than the 0.91 m applied.
+  const conf = await p.evaluate(async () => {
+    const c0 = window.__connect, out = {};
+    window.__connect = Object.assign({}, c0, { kv: 132, n: 1 });   // the 132 kV single-circuit farmland case, same route
+    const said = await window.__trench.cmd('trench auto farmland'); const r = window.__trench.check();
+    window.SIM.map.fire('moveend'); await new Promise(z => setTimeout(z, 300));
+    out.k132 = { said, section: r.section, cover: r.rows.find(x => x.what === 'cover'), text: r.text, foot: document.getElementById('trench-foot').textContent };
+    window.__connect = c0;
+    const said33 = await window.__trench.cmd('trench 33kv-1-agri'); const r33 = window.__trench.check();
+    window.SIM.map.fire('moveend'); await new Promise(z => setTimeout(z, 300));
+    out.k33 = { said: said33, cover: r33.rows.find(x => x.what === 'cover'), foot: document.getElementById('trench-foot').textContent };
+    return out;
+  });
+  const CAV = "S2 asks 1.05 m on agricultural land; not applied; the network operator's spec decides";
+  check('132kv-1-dno@farmland: cover tag contains "minimum"', conf.k132.section === '132kv-1-dno@farmland' && /minimum/.test(conf.k132.cover.prov) && conf.k132.cover.value_m === 0.91 && conf.k132.cover.pass, JSON.stringify(conf.k132.cover));
+  check('132 kV farmland: panel and result text carry the S2 1.05 m caveat', /1\.05/.test(conf.k132.foot) && conf.k132.foot.includes(CAV) && conf.k132.text.includes(CAV) && conf.k132.said.includes(CAV), conf.k132.foot.slice(-260));
+  check('33kv-1-agri shows the same caveat, cover still 0.91 m', /minimum/.test(conf.k33.cover.prov) && conf.k33.cover.value_m === 0.91 && conf.k33.foot.includes(CAV) && conf.k33.said.includes(CAV), conf.k33.cover.prov + ' | ' + conf.k33.foot.slice(-200));
+  await p.screenshot({ path: path.join(OUT, '2c-33kv-agri-caveat.png') });
+  const k33o = await p.evaluate(async () => { await window.__trench.cmd('trench 33kv-1-dno'); return window.__trench.check().rows.find(x => x.what === 'cover'); });
+  check('other-land section keeps plain "cited" (no farmland caveat)', k33o.prov === 'cited', JSON.stringify(k33o));
   // A typed section.
   const t = await p.evaluate(async () => { const txt = await window.__trench.cmd('trench w 0.6 d 1.2 cover 0.9 od 160mm'); return { txt, r: window.__trench.check(), s: window.__trench.spec() }; });
   check('typed section drawn and checked within 1 cm', t.r.ok && t.s.id === 'typed' && t.s.w === 0.6 && t.s.d === 1.2 && t.s.cover === 0.9 && Math.abs(t.s.od - 0.16) < 1e-12, t.r.text);

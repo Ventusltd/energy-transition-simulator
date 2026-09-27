@@ -62,6 +62,26 @@
         prov: { w: WIDTH_TAG(s.source), d: 'derived', cover: tag, od: s.duct_od_mm ? tag : 'assumed', cs: s.circuits > 1 ? 'derived' : null, tile: tag },
         source: s.source, status: s.status };
     }
+    // Farmland cover sources disagree. S1 gives 0.91 m on good agricultural land (applied); the catalogue's own source
+    // text also cites S2 at a stricter agricultural cover. That value is parsed from the text (never hard-coded), shown,
+    // and not applied: the cover is tagged "cited minimum". It is looked for in the section's own source, then in the
+    // other catalogue sections of the same voltage. No second value found: the tag stays plain "cited".
+    function s2Agri(src) {
+      const m = /\bS2\b[^;]*?(\d+(?:\.\d+)?)\s*(mm|m)?\s*agricultural/i.exec(src || ''); if (!m) return null;
+      const v = +m[1], mm = (m[2] || '').toLowerCase() === 'mm' || (!m[2] && v > 10); return mm ? v / 1000 : v;
+    }
+    function farmCaveat(s, all, baseId) {
+      if (!s || s.prov.cover !== 'cited') return s;
+      const kv = String(baseId || s.id).split('-')[0];
+      const cands = [{ id: baseId || s.id, src: s.source }].concat(all.filter(x => x.id !== (baseId || s.id) && x.id.split('-')[0] === kv).map(x => ({ id: x.id, src: x.source })));
+      for (const c of cands) { const v = s2Agri(c.src);
+        if (v > s.cover + 1e-9) {
+          const note = `S2 asks ${+v.toFixed(3)} m on agricultural land; not applied; the network operator's spec decides`;
+          return Object.assign({}, s, { prov: Object.assign({}, s.prov, { cover: 'cited minimum' }), s2: { cover_m: v, from: c.id }, caveat: note,
+            source: s.source.replace(/\.\s*$/, '') + (c.id !== (baseId || s.id) ? ` [${c.id}: S2 ${+v.toFixed(3)} m agricultural]` : '') + '. ' + note });
+        } }
+      return s;
+    }
     // "trench w 0.65 d 1.28 cover 0.9 od 160mm [circuits 2 cs 600mm] [tile 0.8]"
     function typed(line) {
       const v = {}, re = /\b(w|width|d|depth|cover|od|circuits|cs|tile)\s*=?\s*(-?[\d.]+)\s*(mm|m)?\b/gi; let m;
@@ -248,7 +268,7 @@
       const r = { name: 'consistency', ok, section: s.id, land: s.land || null, land_prov: s.landProv || null, ribs: st.ribs.length, tolerance_m: TOL, rows,
         text: `Trench consistency ${ok ? 'PASS' : 'FAIL'} (drawn = ${s.status === 'typed' ? 'typed' : 'catalogue'} values; not a site survey): ${st.ribs.length} ribs of ${s.id}` +
           (s.land ? `, land ${s.land} (${s.landProv})` : '') + ', read back from the drawn buffers. ' +
-          rows.map(x => `${x.what} ${x.value_m.toFixed(3)} m (${x.prov}) worst ${(x.worst_err_m * 1000).toFixed(2)} mm`).join('; ') + '. Tolerance 10 mm.' };
+          rows.map(x => `${x.what} ${x.value_m.toFixed(3)} m (${x.prov}) worst ${(x.worst_err_m * 1000).toFixed(2)} mm`).join('; ') + '. Tolerance 10 mm.' + (s.caveat ? ' ' + s.caveat + '.' : '') };
       st.last = r; return r;
     }
 
@@ -331,11 +351,12 @@
               tile: s.tile ? +(s.tile + dz).toFixed(3) : s.tile, prov: Object.assign({}, s.prov, { cover: 'cited', d: 'derived', tile: 'derived' }),
               status: 'verified cover, derived depth', source: `Cover ${FARM_COVER} m: ${FARM_SRC}. Depth and tile lowered by ${(dz * 1000).toFixed(0)} mm from ${s.id} (derived). ${s.id}: ${s.source}` });
           }
+          if (land === 'farmland') s = farmCaveat(s, all, id);
           s.land = land; s.landProv = am[1] ? 'typed' : (st.landProv || 'assumed');
           st.land = land; st.landProv = s.landProv; st.auto = true;
         } else if (/^trench\s/.test(low)) {
           const id = low.split(/\s+/)[1], all = await sections(), x = all.find(y => y.id === id);
-          if (x) s = fromSection(x);
+          if (x) { s = fromSection(x); if (/-agri$/.test(x.id)) s = farmCaveat(s, all); }
           else if (/^[a-z0-9]+-[a-z0-9-]+$/.test(id)) return say(`No section "${id}". Known: ${all.map(y => y.id).join(', ')}`);
           else s = typed(line);
           st.auto = false;
