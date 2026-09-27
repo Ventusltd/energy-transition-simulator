@@ -39,7 +39,10 @@
     licence: 'Open Government Licence v3.0',
     attribution: '© Environment Agency copyright and/or database right 2024. All rights reserved. Some features of this map are based on digital spatial data from the Centre for Ecology & Hydrology, © NERC (CEH). © Crown Copyright and Database Rights 2024 OS AC0000807064.',
     date: 'zones published Nov 2023 (EA item); service data edited FZ3 2024-05-09, FZ2 2025-01-01; may predate the latest EA national update',
-    caveat: 'planning flood zones, not a site flood risk assessment'
+    caveat: 'planning flood zones, not a site flood risk assessment',
+    // Round 5: EA Flood Zones item text (items cf1cf6ef.../08127810..., (c) Environment Agency, OGL v3.0, read 27 Sept 2026):
+    // the zones show risk "ignoring the benefits of defences". Reported by the EA, not measured here.
+    defences: 'undefended: they ignore flood defences [reported, EA], so a defended area can still show as Zone 3'
   };
   var EA_GAP_MS = 40000;
   var GA = 'https://ventusltd.github.io/gridatlas/atlas/releases/202608300453-atlas-v9/data/grid_substations.geojson';
@@ -152,9 +155,10 @@
     if (!res) return phone ? 'FLOOD: EA service did not answer; no value shown.'
       : 'FLOOD: Environment Agency Flood Map for Planning did not answer' + (err ? ' (' + err + ')' : '') + '; no value shown.';
     var f = function (z) { return (100 * z.share).toFixed(1) + '% (' + z.ha.toFixed(0) + ' ha)'; };
-    if (phone) return 'FLOOD: Zone 3 ' + (100 * res.fz3.share).toFixed(1) + '%, Zone 2 ' + (100 * res.fz2.share).toFixed(1) + '% [derived]; ' + FZ.caveat + '. EA, OGL v3.0';
+    if (phone) return 'FLOOD: Zone 3 ' + (100 * res.fz3.share).toFixed(1) + '%, Zone 2 ' + (100 * res.fz2.share).toFixed(1) + '% [derived]; Zone 2 includes Zone 3; do not add. '
+      + 'Zones are ' + FZ.defences + '. ' + FZ.caveat.charAt(0).toUpperCase() + FZ.caveat.slice(1) + '. EA, OGL v3.0' + (res.exceeded ? '. WARNING: service transfer limit hit; shares incomplete.' : '');
     return 'FLOOD (EA Flood Map for Planning, Rivers and Sea): box in Flood Zone 3 ' + f(res.fz3) + ' [derived]; in Flood Zone 2 ' + f(res.fz2) + ' [derived]. '
-      + 'Per layer (the layers can overlap; do not add). Caveat: ' + FZ.caveat + '; rivers and sea only, not surface water or groundwater.'
+      + 'Per layer (the layers can overlap; do not add). Zones are ' + FZ.defences + '. Caveat: ' + FZ.caveat + '; rivers and sea only, not surface water or groundwater.'
       + (res.exceeded ? ' WARNING: service transfer limit hit; shares incomplete.' : '');
   }
   var core = { SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };

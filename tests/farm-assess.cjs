@@ -115,4 +115,16 @@ T('(fz) no answer (service error) -> says so, shows no value', () => {
   const t = A.floodText(null, false, 'HTTP 503'), tp = A.floodText(null, true);
   return [threw && /did not answer/.test(t) && /no value shown/.test(t) && !/%/.test(t + tp) && /no value shown/.test(tp), t]; });
 
+// 10. Round 5: honest flood wording (undefended zones; phone overlap note; phone transfer-limit warning).
+const empty5 = () => A.floodShares(A.parseFlood({ layers: [{ id: 1, features: [] }, { id: 2, features: [] }] }), A.centredBox(412345, 290001));
+T('(fz5) desktop and phone say the zones are undefended and ignore flood defences', () => {
+  const t = A.floodText(empty5(), false), tp = A.floodText(empty5(), true), w = /undefended: they ignore flood defences \[reported, EA\], so a defended area can still show as Zone 3/;
+  return [w.test(t) && w.test(tp), tp]; });
+T('(fz5) phone line says Zone 2 includes Zone 3; do not add', () => {
+  const tp = A.floodText(empty5(), true); return [tp.includes('Zone 2 includes Zone 3; do not add'), tp.slice(0, 120)]; });
+T('(fz5) phone line warns when the service transfer limit is hit, and not otherwise', () => {
+  const hit = A.floodShares(A.parseFlood({ layers: [{ id: 1, features: [], exceededTransferLimit: true }, { id: 2, features: [] }] }), A.centredBox(412345, 290001));
+  const tp = A.floodText(hit, true);
+  return [hit.exceeded && /WARNING: service transfer limit hit; shares incomplete/.test(tp) && !/WARNING/.test(A.floodText(empty5(), true)), tp.slice(-70)]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
