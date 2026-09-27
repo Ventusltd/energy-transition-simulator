@@ -283,4 +283,27 @@ T('(des12) transfer limit hit: never "none in box"; says not fully checked', () 
   const d = okAll({}, { SPA: { exceededTransferLimit: true } }), t = A.desText(d, false);
   return [t.includes('SPA: not fully checked (service transfer limit hit)') && !/SPA: none/.test(t), t.split('\n')[6]]; });
 
+// Round 13: the England guard, decided from the ALC answer already fetched.
+const alcOf = feats => A.assessBox(feats, bx12);
+T('(eng13) 0% England (all "no ALC polygon", ALC ok): every designation line "not checked (no England land in box)", never "none in box"; ALC note says England only', () => {
+  const res = alcOf([]), eng = A.englandPart(res, false), t = A.desText(null, false, eng), tp = A.desText(null, true, eng), t2 = A.desText(okAll({}), false, eng);
+  const lines = t.split('\n').slice(1), n = A.alcEngText(eng, false), np = A.alcEngText(eng, true);
+  return [eng.known && eng.zero && eng.share === 0 && lines.length === 6 && lines.every(l => l.endsWith(': ' + A.NO_ENG)) && !/none in box/.test(t + tp + t2) && !/fetch failed/.test(t)
+    && tp.startsWith('DESIGNATIONS: ' + A.NO_ENG + ': SSSI, National Landscape, National Park, Ramsar, SAC, SPA') && t2 === t
+    && /No England land in box/.test(n) && /England only/.test(n) && /No England land in box/.test(np), lines[0] + ' || ' + tp]; });
+T('(eng13) PARTIAL: England covers 37.5% of the box: per-layer lines kept, header and phone say "England part only: 37.5% of box"', () => {
+  const res = alcOf([{ grade: 'Grade 3', rings: [sq(X0 - 50, Y0 - 50, X0 + 768, Y0 + 2100)] }]), eng = A.englandPart(res, false);
+  const d = okAll({ SSSI: [{ attributes: {}, geometry: { rings: [sq(X0, Y0, X0 + 256, Y0 + 2048)] } }] }), t = A.desText(d, false, eng), tp = A.desText(d, true, eng);
+  return [eng.known && !eng.zero && eng.part && near(eng.share, 0.375, 1e-9) && t.split('\n')[0].includes('England part only: 37.5% of box') && t.split('\n').length === 7
+    && t.includes('SSSI: 1 site in box, 12.5% of box') && (t.match(/none in box/g) || []).length === 5 && tp.startsWith('DESIGNATIONS (England part only: 37.5% of box, box only)')
+    && A.alcEngText(eng, false).includes('England part only: 37.5% of box') && A.alcEngText(A.englandPart(alcOf([{ grade: 'Grade 2', rings: [sq(X0 - 9, Y0 - 9, X0 + 2060, Y0 + 2060)] }]), false), false) === '',
+    t.split('\n')[0].slice(-60) + ' || ' + tp.slice(0, 60)]; });
+T('(eng13) ALC FAILED: hits still reported; "none in box" becomes "none in the England part (England extent unknown, ALC fetch failed)"; limit hit says incomplete', () => {
+  const eng = A.englandPart(null), d = okAll({ SAC: [{ attributes: {}, geometry: { rings: [sq(X0 + 900, Y0 + 900, X0 + 1100, Y0 + 1100)] } }] });
+  const t = A.desText(d, false, eng), tp = A.desText(d, true, eng), te = A.desText(okAll({}), false, A.englandPart(alcOf([]), true));
+  return [!eng.known && eng.why === 'ALC fetch failed' && t.includes('SAC: 1 site in box, 1.0% of box (4.0 ha)') && !/none in box/.test(t + tp)
+    && (t.match(/none in the England part \(England extent unknown, ALC fetch failed\)/g) || []).length === 5 && (tp.match(/none in the England part/g) || []).length === 5
+    && A.alcEngText(eng, false) === '' && (te.match(/England extent unknown, ALC answer incomplete/g) || []).length === 6 && !/no England land/.test(te),
+    t.split('\n')[1]]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
