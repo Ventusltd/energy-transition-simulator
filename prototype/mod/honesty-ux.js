@@ -1,15 +1,16 @@
 // honesty-ux: one typed grammar for every module, and credits that stay on screen.
 // 1. SIM.command(line): the one command grammar. "<verb> <rest>".
 //    - A module registers its own verbs with SIM.registerCommand(verb, fn(rest, line) -> text|Promise<text>, help).
-//    - "go ..." is handed to the find box (window.findGo) when no module has claimed "go".
-//    - Any button on the bar is a verb by its label: "walk", "drone", "wire", "pylons", "satellite" click it.
+//    - A line that EXACTLY equals a bar button's label presses it: "walk", "drone", "wire", "pylons", "solar rows".
+//    - Every other line goes to the find box unchanged (window.findGo): "go solar", "solar", "TQ 30624 78388".
+//      "Unknown command" only when there is no find box.
 //    - "help" lists every verb; "credits" lists every data source shown now.
 //    The find box (#fg-in) already on screen takes the whole grammar: Enter on a line that is not "go ..." runs SIM.command.
 // 2. Credits strip (#credits): the attribution for what is drawn stays on screen. #info is overwritten by
 //    each module's message, so a credit written there is lost; the strip is not.
 //    - Always: GridAtlas (grid layers, built on OpenStreetMap, ODbL).
 //    - Environment Agency LiDAR, Open Government Licence v3.0, whenever measured ground is drawn:
-//      any block tagged lidar/ea, or a module that calls SIM.credit('ea-lidar', true).
+//      a drawn block tagged lidar or lidarStream (the R5 stream), or a module that calls SIM.credit('ea-lidar', true).
 //    - Modules add their own with SIM.credit(key, text) and drop it with SIM.credit(key, false).
 (function () {
   'use strict';
@@ -31,20 +32,21 @@
     return 'Commands: ' + own.concat(go).join(' · ') + ' | Buttons: ' + bt.join(' · ');
   }
 
+  // A registered verb runs; a line that EXACTLY equals a button label presses it; every other line goes to the
+  // find box unchanged (window.findGo), so a search is never lost to a button whose label merely starts the same.
   async function command(line) {
     const t = String(line || '').trim(); if (!t) return '';
     const sp = t.search(/\s/), verb = (sp < 0 ? t : t.slice(0, sp)).toLowerCase(), rest = sp < 0 ? '' : t.slice(sp + 1).trim();
     if (cmds.has(verb)) return String(await cmds.get(verb).fn(rest, t) ?? '');
-    if (verb === 'go' && window.findGo) return String(await window.findGo(t) ?? '');
-    const want = t.toLowerCase(), bs = buttons();
-    const b = bs.find(x => label(x) === want) || bs.find(x => label(x).startsWith(want)) || bs.find(x => label(x).split(/\s+/)[0] === verb);
+    const want = t.toLowerCase(), b = buttons().find(x => label(x) === want);
     if (b) { b.click(); return `Pressed "${b.textContent.trim()}".`; }
+    if (window.findGo) return String(await window.findGo(t) ?? '');
     return `Unknown command "${verb}". Type help.`;
   }
 
   function activeCredits(S) {
     const out = [GA];
-    const ea = credits.has('ea-lidar') || S.blocks.some(b => b && (b.lidar || b.ea));
+    const ea = credits.has('ea-lidar') || S.blocks.some(b => b && (b.lidar || b.lidarStream));
     if (ea) out.push(EA);
     for (const [k, v] of credits) if (k !== 'ea-lidar' && typeof v === 'string') out.push(v);
     return out;
