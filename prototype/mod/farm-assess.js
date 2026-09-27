@@ -1,7 +1,10 @@
 // farm-assess.js: assess a farmer's LAND and GRID for solar, where you arrive (plain script; attaches to window.SIM).
 // Round 1 layer: Natural England's Provisional Agricultural Land Classification (ALC), England only.
-//  - The site box is the R5 tile: the 2,048 m x 2,048 m square of the British National Grid lattice under the map centre.
-//  - ONE ArcGIS REST query by that box (EPSG:27700), once per tile per visit. Moving never fetches (R5 rule 6).
+//  - The site box is 2,048 m x 2,048 m CENTRED ON ARRIVAL (round 3): the map centre, snapped to the nearest 256 m
+//    British National Grid node, is the box centre, so every edge lies on the 256 m lattice and the centre is always at
+//    least 896 m from each edge. (Rounds 1-2 used the fixed 2,048 m R5 tile, which can leave the centre near an edge.)
+//  - ONE ArcGIS REST query by that box (EPSG:27700), cached by the snapped key, at least 1.1 s apart. Nothing fetches
+//    while the map moves (R5 rule 6): an assess asked mid-move waits for the map to be idle.
 //  - Grade polygons are clipped to the box and drawn as wire outlines, anchored on the map, labelled with grade,
 //    source, licence and date. The share of the box by grade is DERIVED (clipped planar area in National Grid metres).
 //  - Distance to the nearest GridAtlas substation is DERIVED (great-circle, WGS84 mean radius) from GridAtlas points.
@@ -31,11 +34,16 @@
   // generator, a railway or a factory, is not shown by name.
   var NET_OP = /(power ?networks?|power ?gri[dn]|national grid|electricity (distribution|transmission|networks)|electricity north ?west|nie networks|sp (energy networks|transmission|distribution)|scottish power( distribution)?$|scottish (and|&) southern (electricity networks|energy power distribution)|\bssen\b|sse (power distribution|networks)|scottish hydro electric transmission|western (power|distribution)|southern electric power distribution|central networks|esp electricity|^(ukpn|npg|nget|enwl?|yedl|nedl|sepd|manweb)$)/i;
   var NOT_NET = /renewable|wind|solar|farm|ofto|natural power/i;
-  var TILE = 2048, R = 6371008.8, D = Math.PI / 180, MIN_GAP_MS = 1100;
+  var TILE = 2048, SNAP = 256, R = 6371008.8, D = Math.PI / 180, MIN_GAP_MS = 1100;
 
   // ---------------- pure core (no DOM, no network; tested by tests/farm-assess.cjs) ----------------
   function tileBox(e, n) { var e0 = Math.floor(e / TILE) * TILE, n0 = Math.floor(n / TILE) * TILE;
     return { e0: e0, n0: n0, e1: e0 + TILE, n1: n0 + TILE, key: e0 + '_' + n0 }; }
+  // Box of side TILE centred on the point snapped to the nearest SNAP node. Edges on the SNAP lattice; key is stable for
+  // every point in the same SNAP cell; |point - centre| <= SNAP/2 per axis, so each edge is >= TILE/2 - SNAP/2 = 896 m away.
+  function centredBox(e, n) { var ce = Math.round(e / SNAP) * SNAP, cn = Math.round(n / SNAP) * SNAP, h = TILE / 2;
+    return { e0: ce - h, n0: cn - h, e1: ce + h, n1: cn + h, key: 'c' + ce + '_' + cn, centred: true }; }
+  function edgeMargin(b, e, n) { return Math.min(e - b.e0, b.e1 - e, n - b.n0, b.n1 - n); }
   // Sutherland-Hodgman against an axis-aligned box. Keeps ring orientation, so signed areas of holes still subtract.
   function clipRing(ring, b) {
     var out = ring.slice(); if (out.length > 1 && out[0][0] === out[out.length - 1][0] && out[0][1] === out[out.length - 1][1]) out.pop();
@@ -99,7 +107,7 @@
     return SRC.url + '?where=1%3D1&geometry=' + [b.e0, b.n0, b.e1, b.n1].join('%2C') + '&geometryType=esriGeometryEnvelope&inSR=27700'
       + '&spatialRel=esriSpatialRelIntersects&outFields=ALC_GRADE&returnGeometry=true&outSR=27700&maxAllowableOffset=5&geometryPrecision=1&f=json';
   }
-  var core = { SRC: SRC, TILE: TILE, tileBox: tileBox, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl };
+  var core = { SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
@@ -129,7 +137,7 @@
     el.style.cssText = 'font:11px sans-serif;color:#dfe;background:rgba(0,20,30,.78);border:1px solid #6cf;padding:3px 6px;border-radius:4px;max-width:210px;pointer-events:none;white-space:normal';
     el.innerHTML = html; markers.push(new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(SIM.map));
   }
-  function draw(b, res) {
+  function draw(b, res, ctr) {
     var P = PF(), c = P.fromBng((b.e0 + b.e1) / 2, (b.n0 + b.n1) / 2), an = P.placeKey(c.lat, c.lon);
     // Drape on the map's terrain: each vertex carries its ground height relative to the anchor (the render adds the
     // anchor's own height), so outlines are not hidden by hills. Terrain is the open AWS model: an estimate.
@@ -139,6 +147,10 @@
     for (var i = 0; i < 4; i++) { var A0 = C[i], B0 = C[(i + 1) % 4];
       for (var s = 0; s < 32; s++) { var a = loc(A0[0] + (B0[0] - A0[0]) * s / 32, A0[1] + (B0[1] - A0[1]) * s / 32), d = loc(A0[0] + (B0[0] - A0[0]) * (s + 1) / 32, A0[1] + (B0[1] - A0[1]) * (s + 1) / 32);
         L.push([a[0], a[1], a[2] + 1, d[0], d[1], d[2] + 1]); if (s === 0) L.push([a[0], a[1], a[2], a[0], a[1], a[2] + 12]); } }
+    if (ctr) { var X = 60, t0 = P.toBng(ctr[1], ctr[0]);   // small cross at the map centre (the arrival point), 120 m wide
+      [[-X, 0, X, 0], [0, -X, 0, X]].forEach(function (d) { var a = loc(t0.e + d[0], t0.n + d[1]), q = loc(t0.e + d[2], t0.n + d[3]);
+        L.push([a[0], a[1], a[2] + 3, q[0], q[1], q[2] + 3]); });
+      var o = loc(t0.e, t0.n); L.push([o[0], o[1], o[2], o[0], o[1], o[2] + 25]); }
     res.clipped.forEach(function (f) {
       var h = 1.5 + (6 - (parseInt(f.grade.replace(/\D/g, ''), 10) || 6)) * 1.5;   // outline height by grade: a visual cue only
       var big = f.rings[0], be = 0, bn = 0;
@@ -153,14 +165,15 @@
   }
   function report(b, rec, res, sub, c) {
     var pct = function (x) { return (100 * x).toFixed(1) + '%'; };
-    var lines = ['LAND: site box ' + (b.e0 / 1000) + ',' + (b.n0 / 1000) + ' km (2,048 m BNG tile, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
+    var lines = ['LAND: site box ' + (b.e0 / 1000) + ',' + (b.n0 / 1000) + ' km (2,048 m, centred on arrival, edges on 256 m BNG grid, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
     res.rows.forEach(function (r) { lines.push('  ' + r.grade + ': ' + pct(r.share) + ' (' + r.ha.toFixed(0) + ' ha) [derived]'); });
     lines.push(grade3Text(res, false) + (res.grade3Share > 0 ? '' : ' Not a field survey.'));
     if (rec.exceeded) lines.push('  WARNING: service transfer limit hit; shares are incomplete.');
     lines.push(gridText(sub, false));
     lines.push('Source: ' + SRC.by + ', ' + SRC.name + '. ' + SRC.licence + '. ' + SRC.attribution + ' One query, ' + rec.ms + ' ms, ' + rec.at.slice(0, 19) + 'Z.');
-    root.__farmAssess = { box: b, rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at };
-    if (innerWidth < 600) lines = [lines[0].replace(' (2,048 m BNG tile, ', ' (').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
+    var cb = PF().toBng(c[1], c[0]);
+    root.__farmAssess = { box: b, centreBng: { e: cb.e, n: cb.n }, edgeMarginM: edgeMargin(b, cb.e, cb.n), rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at };
+    if (innerWidth < 600) lines = [lines[0].replace(' (2,048 m, centred on arrival, edges on 256 m BNG grid, ', ' (centred on arrival, ').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
         [grade3Text(res, true), gridText(sub, true),
          'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.']);
@@ -168,12 +181,13 @@
   }
   function assess() {
     if (busy) return; busy = true;
-    var c = SIM.map.getCenter(), t = PF().toBng(c.lat, c.lng), b = tileBox(t.e, t.n);
+    if (SIM.map.isMoving && SIM.map.isMoving()) { busy = false; SIM.map.once('idle', assess); return; }   // R5 rule 6
+    var c = SIM.map.getCenter(), t = PF().toBng(c.lat, c.lng), b = centredBox(t.e, t.n);
     if (!(t.e > 0 && t.e < 700000 && t.n > 0 && t.n < 1300000)) { SIM.info('Assess: outside Great Britain; no National Grid box.'); busy = false; return; }
     SIM.info('Assessing land in site box ' + b.key + ' (one request to Natural England)...');
     Promise.all([fetchAlc(b), loadSubs().catch(function () { return []; })]).then(function (x) {
       var rec = x[0], res = assessBox(rec.feats, b), sub = nearest(x[1], c.lat, c.lng);
-      clearDraw(); draw(b, res); report(b, rec, res, sub, [c.lng, c.lat]);
+      clearDraw(); draw(b, res, [c.lng, c.lat]); report(b, rec, res, sub, [c.lng, c.lat]);
     }).catch(function (e) { SIM.info('Assess land: Natural England service did not answer (' + e.message + '). Nothing drawn; no value guessed.'); })
       .then(function () { busy = false; });
   }

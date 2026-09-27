@@ -68,4 +68,26 @@ ok('no grade 3 -> "Grade 3: 0%", no "may include"', g0.includes('Grade 3: 0%') &
 const g3 = A.grade3Text({ grade3Share: 0.25, bmv12Share: 0.5 }, false);
 ok('grade 3 present -> 3a/3b caveat kept', g3.includes('25.0% may include BMV 3a') && /Field survey needed/.test(g3), g3);
 
+// 8. Round 3: the box is centred on arrival, edges on the 256 m BNG lattice, 2,048 m square.
+const T = (name, f) => { let c = false, ev = ''; try { [c, ev] = f(); } catch (x) { ev = 'threw: ' + x.message; } ok(name, c, ev); };
+let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+const pts = Array.from({ length: 2000 }, () => [100000 + rnd() * 500000, 100000 + rnd() * 800000]);
+T('(a) centre >= 896 m from every box edge (2,000 random points, and cell corners)', () => {
+  let worst = Infinity; for (const [e, n] of pts.concat([[412416 + 128, 290048 - 128], [412416 - 127.999, 290048 + 127.999]])) worst = Math.min(worst, A.edgeMargin(A.centredBox(e, n), e, n));
+  return [worst >= 896, 'worst margin ' + worst.toFixed(3) + ' m']; });
+T('(a) centre 30 m above a tile south edge: fixed tile margin < 896 m, centred box margin >= 896 m', () => {
+  const e = 520300, n = 335872 + 30, t = A.tileBox(e, n), c = A.centredBox(e, n);   // synthetic; 335872 = 164 x 2048
+  return [A.edgeMargin(t, e, n) < 896 && A.edgeMargin(c, e, n) >= 896, `tile ${A.edgeMargin(t, e, n).toFixed(0)} m, centred ${A.edgeMargin(c, e, n).toFixed(0)} m`]; });
+T('(b) moves under 256 m inside one 256 m cell reuse the same cache key', () => {
+  let same = 0, k = 0; for (const [e, nn] of pts.slice(0, 500)) { const ce = Math.round(e / 256) * 256, cn = Math.round(nn / 256) * 256;
+    const k0 = A.centredBox(ce - 127, cn - 127).key; for (const [de, dn] of [[0, 0], [254, 0], [0, 254], [254, 254], [100, 37]]) { k++; if (A.centredBox(ce - 127 + de, cn - 127 + dn).key === k0) same++; } }
+  return [same === k, `${same}/${k} same key`]; });
+T('(b) any move under 256 m shifts each edge by at most one 256 m step (neighbour key, never a jump)', () => {
+  let bad = 0; for (const [e, n] of pts) { const a = A.centredBox(e, n), b2 = A.centredBox(e + 255 * (rnd() * 2 - 1), n + 255 * (rnd() * 2 - 1));
+    if (Math.abs(a.e0 - b2.e0) > 256 || Math.abs(a.n0 - b2.n0) > 256) bad++; } return [bad === 0, bad + ' jumps']; });
+T('(b) edges lie on the 256 m BNG lattice', () => [pts.every(([e, n]) => { const b2 = A.centredBox(e, n); return [b2.e0, b2.n0, b2.e1, b2.n1].every(v => v % 256 === 0); }), 'all edges % 256 == 0']);
+T('(c) centred box area stays 419.43 ha; one envelope query for it', () => {
+  const cb = A.centredBox(412345, 290001), rr = A.assessBox([], cb);
+  return [near(rr.boxHa, 419.4304, 1e-6) && cb.e1 - cb.e0 === 2048 && cb.n1 - cb.n0 === 2048 && /geometry=411392%2C289024%2C413440%2C291072/.test(A.queryUrl(cb)), `${rr.boxHa} ha, ${JSON.stringify(cb)}`]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
