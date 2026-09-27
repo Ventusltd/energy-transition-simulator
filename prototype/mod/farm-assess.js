@@ -175,12 +175,20 @@
     var maxH = Math.max(PANEL.minH, Math.floor(vh - bottom - (topReserve || 0) - PANEL.gap));
     return { bottom: bottom, maxHeight: maxH, phone: phone };
   }
-  var core = { PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
+  // Round 7: #info is shared. Before the farmer result lifts it, record the inline styles and class it will change;
+  // when another module writes #info (its text no longer starts with the farmer's first line), put them back exactly.
+  var INFO_KEYS = ['whiteSpace', 'bottom', 'maxHeight', 'overflowY', 'maxWidth', 'boxSizing', 'zIndex', 'background'], FARM_HEAD = 'LAND: site box';
+  function snapInfo(el) { var st = {}; INFO_KEYS.forEach(function (k) { st[k] = el.style[k]; }); return { style: st, lift: el.classList.contains('fa-lift') }; }
+  function isFarmText(t) { return String(t || '').indexOf(FARM_HEAD) === 0; }
+  function restoreInfo(prev, el) { INFO_KEYS.forEach(function (k) { el.style[k] = prev.style[k]; }); if (!prev.lift) el.classList.remove('fa-lift'); }
+  // Called on each #info mutation while the farmer result is lifted. Returns true when it restored (the watch is then over).
+  function infoChanged(prev, el) { if (!prev || isFarmText(el.textContent)) return false; restoreInfo(prev, el); return true; }
+  var core = { INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
   // ---------------- browser ----------------
-  var cache = {}, fzCache = {}, lastEa = 0, lastReq = 0, subs = null, markers = [], busy = false;
+  var cache = {}, fzCache = {}, lastEa = 0, lastReq = 0, subs = null, markers = [], busy = false, infoPrev = null, infoObs = null;
   function PF() { return root.__pf && root.__pf.PF; }
   function wait(fn) { if (root.SIM && PF()) fn(); else setTimeout(function () { wait(fn); }, 300); }
   function loadSubs() { if (subs) return subs;
@@ -280,7 +288,15 @@
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
         [grade3Text(res, true), floodText(fz, true, fzErr), gridText(sub, true),
          'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '')]);
-    SIM.info(lines.join('\n')); var el = document.getElementById('info'); if (el) { el.style.whiteSpace = 'pre-wrap'; el.classList.add('fa-lift'); el.scrollTop = 0; layoutPanel(); }
+    var el = document.getElementById('info');
+    if (el && !infoPrev) infoPrev = snapInfo(el);   // first farmer result since the last restore: record the originals
+    SIM.info(lines.join('\n')); if (el) { el.style.whiteSpace = 'pre-wrap'; el.classList.add('fa-lift'); el.scrollTop = 0; layoutPanel(); watchInfo(el); }
+  }
+  function watchInfo(el) {   // one observer while lifted; a farmer re-render keeps it, a foreign write restores and ends it
+    if (infoObs || typeof MutationObserver === 'undefined') return;
+    infoObs = new MutationObserver(function () {
+      if (infoChanged(infoPrev, el)) { infoObs.disconnect(); infoObs = null; infoPrev = null; root.__farmInfoRestored = (root.__farmInfoRestored || 0) + 1; } });
+    infoObs.observe(el, { childList: true, characterData: true, subtree: true });
   }
   function assess() {
     if (busy) return; busy = true;

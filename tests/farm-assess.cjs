@@ -139,4 +139,23 @@ T('(panel6) negative: obstacles beside or above the panel do not lift it; height
   const p = A.panelLayout(1280, 800, 728, [{ left: 1136, right: 1256, top: 640, bottom: 760 }, { left: 0, right: 700, top: 8, bottom: 60 }], 790);
   return [p.bottom === 44 && p.maxHeight === A.PANEL.minH, JSON.stringify(p)]; });
 
+// 12. Round 7: #info is shared; the farmer lift is undone exactly when another module writes #info.
+const fakeInfo = (style, cls) => { const c = new Set(cls || []); return { textContent: '', style: Object.assign({}, style),
+  classList: { contains: k => c.has(k), add: k => c.add(k), remove: k => c.delete(k) } }; };
+const ORIG = { whiteSpace: '', bottom: '', maxHeight: '', overflowY: '', maxWidth: '', boxSizing: '', zIndex: '', background: 'rgba(1, 2, 3, 0.5)' };
+const lift = (el, text) => { el.textContent = text; Object.assign(el.style, { whiteSpace: 'pre-wrap', bottom: '214px', maxHeight: '276px', overflowY: 'auto', maxWidth: '374px', boxSizing: 'border-box', zIndex: '5', background: 'rgba(0,10,20,.88)' }); el.classList.add('fa-lift'); };
+const FARM = A.FARM_HEAD + ' 519.936,332.8 km (centred on arrival, 419 ha). ALC provisional 1:250k:';
+T('(info7) records all 8 inline styles and the class; a foreign SIM.info write restores them exactly and drops fa-lift', () => {
+  const el = fakeInfo(ORIG), prev = A.snapInfo(el); lift(el, FARM);
+  const kept = A.infoChanged(prev, el); el.textContent = '52.88900, -0.20000 (typed coordinates, WGS84).'; const done = A.infoChanged(prev, el);
+  return [A.INFO_KEYS.length === 8 && !kept && done && JSON.stringify(el.style) === JSON.stringify(ORIG) && !el.classList.contains('fa-lift'), JSON.stringify(el.style)]; });
+T('(info7) a second farmer result after a restore re-applies the lift (fresh snapshot is the original)', () => {
+  const el = fakeInfo(ORIG); let prev = A.snapInfo(el); lift(el, FARM); el.textContent = 'Pylons: 12 at GridAtlas line vertices.'; A.infoChanged(prev, el);
+  prev = A.snapInfo(el); lift(el, FARM);
+  return [el.classList.contains('fa-lift') && el.style.bottom === '214px' && JSON.stringify(prev.style) === JSON.stringify(ORIG) && !prev.lift, JSON.stringify(prev)]; });
+T('(info7) negative: a farmer re-render (text still starts with the LAND line) does NOT clear the lift', () => {
+  const el = fakeInfo(ORIG), prev = A.snapInfo(el); lift(el, FARM); el.textContent = FARM + '\n  Grade 1 83.4%';
+  const r = A.infoChanged(prev, el), r0 = A.infoChanged(null, el);
+  return [!r && !r0 && el.classList.contains('fa-lift') && el.style.zIndex === '5' && el.style.background === 'rgba(0,10,20,.88)' && !A.isFarmText(' ' + FARM), JSON.stringify(el.style)]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
