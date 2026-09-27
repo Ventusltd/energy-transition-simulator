@@ -23,7 +23,7 @@
   function whenSim(cb) { if (window.SIM && window.SIM.map) return cb(window.SIM); setTimeout(() => whenSim(cb), 100); }
 
   const label = b => b.textContent.replace(/\(.*?\)/g, '').trim().toLowerCase();
-  const buttons = () => Array.from(document.querySelectorAll('#bar button')).filter(b => label(b));
+  const buttons = () => Array.from(document.querySelectorAll('#bar button, button[data-sim-moved]')).filter(b => label(b));
 
   function help() {
     const own = Array.from(cmds.entries()).map(([v, c]) => c.help ? `${v} (${c.help})` : v);
