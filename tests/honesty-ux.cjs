@@ -3,7 +3,8 @@
 // shipped list plus "honesty-ux" (the file on disk is not changed). PASS or FAIL per check, with evidence.
 // Screenshots go to $SHOTS or test-output/honesty-ux/.
 const http = require('http'), fs = require('fs'), path = require('path');
-let gpu = null; try { if (!process.env.CI) gpu = require('E:/swarm/tools/chrome-gpu.cjs'); } catch (e) { gpu = null; }
+// CHROME_GPU_LAUNCHER: path to a shared launcher module exposing launch() (GPU Chrome); plain Playwright without it.
+let gpu = null; try { if (process.env.CHROME_GPU_LAUNCHER) gpu = require(process.env.CHROME_GPU_LAUNCHER); } catch (e) { gpu = null; }
 const { chromium } = gpu || require('playwright');
 // EXTRA_MODS: comma-separated module files from other lanes to switch on in the scratch overlay (served as mod/<name>.js,
 // appended to the scratch module list). Used for the grid-reference check, which needs the addresses lane's module.
