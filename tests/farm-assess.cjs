@@ -127,4 +127,16 @@ T('(fz5) phone line warns when the service transfer limit is hit, and not otherw
   const tp = A.floodText(hit, true);
   return [hit.exceeded && /WARNING: service transfer limit hit; shares incomplete/.test(tp) && !/WARNING/.test(A.floodText(empty5(), true)), tp.slice(-70)]; });
 
+// 11. Round 6: the result panel sits above the bottom band (honesty-ux offsets) and scrolls inside a capped height.
+T('(panel6) offsets: phone (<=480 px) bottom 124 px, desktop bottom 44 px', () => {
+  const p = A.panelLayout(390, 844, 382, [], 0), p480 = A.panelLayout(480, 844, 472, [], 0), d = A.panelLayout(1280, 800, 728, [], 0);
+  return [A.PANEL.phone === 124 && A.PANEL.desktop === 44 && p.bottom === 124 && p.phone && p480.bottom === 124 && d.bottom === 44 && !d.phone, `phone ${p.bottom}, 480 ${p480.bottom}, desktop ${d.bottom}`]; });
+T('(panel6) phone 390: lifted above joystick and find box, never below 124, max-height capped under the button bar', () => {
+  const joy = { left: 246, right: 366, top: 684, bottom: 804 }, fg = { left: 150, right: 382, top: 634, bottom: 668 };
+  const p = A.panelLayout(390, 844, 382, [joy, fg], 350);
+  return [p.bottom === 214 && p.bottom >= 124 && p.maxHeight === 844 - 214 - 350 - 4 && 844 - p.bottom <= fg.top, JSON.stringify(p)]; });
+T('(panel6) negative: obstacles beside or above the panel do not lift it; height never below the floor', () => {
+  const p = A.panelLayout(1280, 800, 728, [{ left: 1136, right: 1256, top: 640, bottom: 760 }, { left: 0, right: 700, top: 8, bottom: 60 }], 790);
+  return [p.bottom === 44 && p.maxHeight === A.PANEL.minH, JSON.stringify(p)]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

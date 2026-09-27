@@ -161,7 +161,21 @@
       + 'Per layer (the layers can overlap; do not add). Zones are ' + FZ.defences + '. Caveat: ' + FZ.caveat + '; rivers and sea only, not surface water or groundwater.'
       + (res.exceeded ? ' WARNING: service transfer limit hit; shares incomplete.' : '');
   }
-  var core = { SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
+  // Round 6: where the farmer result panel sits. Base offsets are honesty-ux's published lift of #info (bottom 44 px on
+  // desktop, 124 px on a phone, <= 480 px wide). The panel is then lifted above anything in the bottom band that would
+  // cover it (joystick, find box), and capped between that edge and the top button bar so it scrolls inside instead of
+  // running under the attribution strip. Rects are viewport px {left, right, top, bottom}; the panel spans x = 8 .. right.
+  var PANEL = { phoneMaxW: 480, phone: 124, desktop: 44, gap: 4, minH: 120, desktopMaxW: 720 };
+  function panelLayout(vw, vh, right, obstacles, topReserve) {
+    var phone = vw <= PANEL.phoneMaxW, bottom = phone ? PANEL.phone : PANEL.desktop;
+    (obstacles || []).forEach(function (o) {
+      if (!o || o.right <= 8 || o.left >= right) return;                    // no horizontal overlap with the panel
+      if (o.top < vh / 2) return;                                            // only the bottom band pushes the panel up
+      bottom = Math.max(bottom, Math.ceil(vh - o.top + PANEL.gap)); });
+    var maxH = Math.max(PANEL.minH, Math.floor(vh - bottom - (topReserve || 0) - PANEL.gap));
+    return { bottom: bottom, maxHeight: maxH, phone: phone };
+  }
+  var core = { PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
@@ -195,6 +209,17 @@
       return fetch(floodQueryUrl(b)).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function (j) {
         var fl = parseFlood(j); fl.ms = Math.round(performance.now() - t0); fl.at = new Date().toISOString(); fzCache[b.key] = fl; return fl; });
     });
+  }
+  // Round 6: lift and cap the result panel (see panelLayout), only while the farmer result is shown (class fa-lift).
+  function layoutPanel() {
+    var el = document.getElementById('info'); if (!el || !el.classList.contains('fa-lift')) return;
+    var vw = innerWidth, vh = innerHeight, right = vw <= PANEL.phoneMaxW ? vw - 8 : Math.min(vw - 8, 8 + PANEL.desktopMaxW);
+    var obs = ['joy', 'fg'].map(function (id) { var o = document.getElementById(id); if (!o) return null; var r = o.getBoundingClientRect(); return r.height ? r : null; });
+    var bar = document.getElementById('bar'), top = bar ? bar.getBoundingClientRect().bottom : 0;
+    var L = panelLayout(vw, vh, right, obs, top);
+    el.style.bottom = L.bottom + 'px'; el.style.maxHeight = L.maxHeight + 'px'; el.style.overflowY = 'auto';
+    el.style.maxWidth = (right - 8) + 'px'; el.style.boxSizing = 'border-box'; el.style.zIndex = '5'; el.style.background = 'rgba(0,10,20,.88)';   // opaque enough that nothing behind bleeds through
+    root.__farmPanel = { bottom: L.bottom, maxHeight: L.maxHeight, phone: L.phone, rect: el.getBoundingClientRect().toJSON(), scrolls: el.scrollHeight > el.clientHeight };
   }
   function clearDraw() { SIM.removeWhere(function (x) { return x.farmAssess; }); markers.forEach(function (m) { m.remove(); }); markers = []; }
   function label(lon, lat, html, border) {
@@ -255,7 +280,7 @@
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
         [grade3Text(res, true), floodText(fz, true, fzErr), gridText(sub, true),
          'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '')]);
-    SIM.info(lines.join('\n')); var el = document.getElementById('info'); if (el) el.style.whiteSpace = 'pre-wrap';
+    SIM.info(lines.join('\n')); var el = document.getElementById('info'); if (el) { el.style.whiteSpace = 'pre-wrap'; el.classList.add('fa-lift'); el.scrollTop = 0; layoutPanel(); }
   }
   function assess() {
     if (busy) return; busy = true;
@@ -276,6 +301,7 @@
     document.addEventListener('keydown', function (e) {   // "assess here" typed in the find box
       if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && /^\s*assess( here)?\s*$/i.test(e.target.value)) { e.preventDefault(); e.stopImmediatePropagation(); e.target.value = ''; e.target.blur(); assess(); }
     }, true);
+    root.addEventListener('resize', layoutPanel);
     root.FARM_ASSESS.run = assess;
     if (/[?&]assess=1/.test(location.search)) { var go = function () { SIM.map.loaded() ? assess() : SIM.map.once('idle', assess); }; go(); }
   });
