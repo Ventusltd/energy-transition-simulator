@@ -35,6 +35,20 @@ async function browser() {
   const farm = s1 && s1.shown.find(x => x.ref === 6502);
   check('solar farm at REPD 6502 drawn', farm && farm.segments > 1000, JSON.stringify(farm && { mw: farm.mw, segments: farm.segments, text: farm.text }));
   check('anchored at the register point', farm && farm.lat === 51.33877 && farm.lon === 0.91388, farm && `${farm.lat}, ${farm.lon}`);
+  // Wait for pylons-real's lines to reach the layout (it loads them async; procedural redoes the site when they arrive).
+  let s1b = s1; for (let t = 0; t < 60 && !(s1b && s1b.shown.some(x => x.ref === 6502 && x.geom.ohl.length)); t++) { await p.waitForTimeout(1000);
+    await p.evaluate(() => window.__proceduralRefresh && window.__proceduralRefresh()); s1b = await state(); }
+  // Clearance: no table corner within reachM + the engine's margin of any real line span (distances in the site's local metres).
+  const clr = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); if (!f) return null; const g = f.geom;
+    const sd = (px, py, [ax, ay], [bx, by]) => { const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L)) : 0; return Math.hypot(px - ax - t * dx, py - ay - t * dy); };
+    let worst = Infinity, bad = 0, containers = 0; for (const h of window.__procedural.shown) { const G = h.geom; containers += G.containers.length;
+    for (const c of [...G.tables, ...G.containers]) for (const z of G.ohl) { const m = Math.min(...c.map(q => sd(q[0], q[1], ...z.pts))) - (z.reachM + G.marginM);
+      if (m < worst) worst = m; if (m < 0) bad++; } }
+    return { spans: g.ohl.length, reach: [...new Set(g.ohl.map(z => z.kv + ' kV ' + z.reachM + ' m'))], tables: g.tables.length, containers, others: window.__procedural.shown.map(h => h.ref + ': ' + h.geom.ohl.length + ' spans, ' + h.geom.skipped + ' kept out'), skipped: g.skipped, bad, worstSlackM: +worst.toFixed(2), text: f.text }; });
+  check('6502: real overhead line spans passed to the layout', clr && clr.spans > 0, JSON.stringify(clr && { spans: clr.spans, reach: clr.reach }));
+  check('6502 view: no table and no container within reachM + margin of any line span', clr && clr.bad === 0 && clr.tables > 1000, JSON.stringify(clr && { tables: clr.tables, containers: clr.containers, bad: clr.bad, worstSlackM: clr.worstSlackM, others: clr.others }));
+  check('6502: table positions kept out reported', clr && clr.skipped > 0 && /table positions kept out of overhead line zones \(illustrative\)/.test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
+  console.log('CLEARANCE 6502', JSON.stringify(clr));
   const info = await p.textContent('#info');
   check('label says procedural estimate', /procedural estimate/.test(info) && /0 measured samples/.test(info), info);
   await shot('1-solar-top');
@@ -46,8 +60,11 @@ async function browser() {
   await p.$eval('#procedural', x => x.click()); const s2 = await waitDrawn(30000);
   const bess = s2 && s2.shown.find(x => x.ref === 16769);
   // 400 MW x 2 h / 3.7 MWh = 216.2 -> 217 containers; 3 segments per edge x 4 edges = 12 per box, plus the fence box.
-  check('battery yard sized from capacity (217 containers, assumed rule)', bess && bess.segments === 12 * 218, JSON.stringify(bess && { segments: bess.segments, text: bess.text }));
+  check('battery yard sized from capacity (217 containers less any kept out of line zones, assumed rule)', bess && bess.segments === 12 * (218 - bess.geom.skipped), JSON.stringify(bess && { segments: bess.segments, skipped: bess.geom.skipped, text: bess.text }));
   await p.click('#wire'); await p.waitForTimeout(2500); await shot('5-bess-wire');
+  const cb = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 16769); return f && { spans: f.geom.ohl.length, skipped: f.geom.skipped, text: f.text }; });
+  check('storage: clearance stated', cb && (cb.spans ? /container positions kept out/.test(cb.text) : /no overhead line data in view: clearance not applied/.test(cb.text)), JSON.stringify(cb));
+  await p.click('#walk'); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('6a-bess-walk');
   await p.click('#drone'); await p.waitForTimeout(3000); await shot('6-bess-fly');
   // 3. Switching off removes every procedural block.
   await p.$eval('#procedural', x => x.click()); await p.waitForTimeout(500);
