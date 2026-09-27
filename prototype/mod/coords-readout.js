@@ -36,6 +36,7 @@
     const bar = document.getElementById('bar');
     const place = () => { hud.style.top = ((bar ? bar.getBoundingClientRect().bottom : 8) + 6) + 'px'; };
     place(); addEventListener('resize', place);
+    if (bar && window.ResizeObserver) new ResizeObserver(place).observe(bar); // other modules add buttons later
 
     // ---- terrain height: own tile sampler, independent of style changes and exaggeration ----
     const tiles = new Map();
@@ -113,7 +114,7 @@
       const sv = surveyOn();
       const gl = sv ? (lidarCached(lat, lon) ? 'LiDAR 1 m (cached)' : 'Survey grid 10 m · LiDAR 1 m not cached here') : 'Ground: satellite + open terrain';
       rows.push(`<span class="r">${esc(gl)}</span>`);
-      rows.push(`<span class="s">Grid: OS National Grid, OSTN15 · Terrain: AWS Terrain Tiles (open)</span>`);
+      rows.push(`<span class="s">Grid: OS National Grid, OSTN15</span>`, `<span class="s">Terrain: AWS Terrain Tiles (open)</span>`);
       hud.innerHTML = rows.join('\n');
     }
 

@@ -47,7 +47,9 @@
     }
 
     // ---- Camera: MapLibre orbits a centre on the ground; put the centre ahead of the eye so the camera sits on it.
-    const ground = (lo, la) => { const g = map.queryTerrainElevation ? map.queryTerrainElevation([lo, la]) : 0; return g == null ? 0 : g; };
+    // Absolute metres. MapLibre 4 returns queryTerrainElevation relative to the centre's elevation (transform.elevation),
+    // so add that back; measured 27 Sept at the farm: camera altitude minus this ground = 1.70 m.
+    const ground = (lo, la) => { const g = map.queryTerrainElevation ? map.queryTerrainElevation([lo, la]) : 0; return (g == null ? 0 : g) + (map.transform.elevation || 0); };
     function place() {
       const g = ground(lon, lat), want = g + EYE;
       eyeZ = eyeZ == null ? want : eyeZ + (want - eyeZ) * 0.25;                  // smooth the step over rough terrain

@@ -136,7 +136,7 @@
         await new Promise(done => { (function lay() { for (let n = 0; n < per && k < ch.blocks.length; n++) SIM.addBlock(ch.blocks[k++]); if (k < ch.blocks.length) requestAnimationFrame(lay); else done(); })(); });
         startPulse(path);
         SIM.info(`Connect here (ESTIMATE, not a design): nearest ${st.kv} kV substation point ${(straightLen / 1000).toFixed(2)} km straight; ` +
-          `cable by ${how}: ${km.toFixed(2)} km. At ${st.mw} MW, pf ${PF_COS}: ${e.I.toFixed(0)} A, ${e.n} x ${CABLE[st.kv].name} (R' ${CABLE[st.kv].r} ohm/km, assumed) ` +
+          `cable by ${how}: ${km.toFixed(2)} km. At ${st.mw} MW, pf ${PF_COS}: ${e.I.toFixed(0)} A, ${e.n} circuit(s) of ${CABLE[st.kv].name} (R' ${CABLE[st.kv].r} ohm/km, assumed) ` +
           `-> drop about ${(e.dV / 1000).toFixed(2)} kV (${e.pct.toFixed(2)} %), loss about ${(e.loss / 1e6).toFixed(2)} MW. Resistive only, reactance ignored. ` +
           `Data: GridAtlas substation points${st.road ? '; route © OpenStreetMap contributors via OSRM' : ''}.`);
         window.__connect = { here, sub: best.c, kv: st.kv, mw: st.mw, how, straight_m: straightLen, route_m: ch.length, blocks: ch.blocks.length + 2, marks: ch.marks.length, ...e };
@@ -152,7 +152,8 @@
     }
     function fit(path) {
       let w = 180, s = 90, e = -180, nn = -90; for (const [x, y] of path) { w = Math.min(w, x); e = Math.max(e, x); s = Math.min(s, y); nn = Math.max(nn, y); }
-      map.fitBounds([[w, s], [e, nn]], { padding: 80, pitch: 50, duration: 1200, maxZoom: 16 });
+      const H = map.getContainer().clientHeight, W = map.getContainer().clientWidth;
+      map.fitBounds([[w, s], [e, nn]], { padding: { top: Math.round(H * 0.3), bottom: Math.round(H * 0.2), left: Math.round(W * 0.1), right: Math.round(W * 0.1) }, pitch: 45, duration: 1200, maxZoom: 16 });
     }
     function clear() { cancelAnimationFrame(st.raf); st.pulse = null; SIM.removeWhere(b => b.connect); }
     function startPulse(path) {

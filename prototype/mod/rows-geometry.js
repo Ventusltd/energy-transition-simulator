@@ -51,7 +51,7 @@
       }
       const fill = cnt / (CELL * CELL), tr = jxx + jyy;
       const coh = tr ? Math.hypot(jxx - jyy, 2 * jxy) / tr : 0;
-      const ok = fill > 0.12 && fill < 0.9 && coh > 0.25;
+      const ok = fill > 0.12 && fill < 0.985 && coh > 0.25;
       cells.push({ cx, cy, fill, coh, ok, vx: ok ? (jxx - jyy) * coh : 0, vy: ok ? 2 * jxy * coh : 0 });
     }
     for (const c of cells) {                          // smooth the doubled angle with the 3 x 3 neighbours
@@ -62,11 +62,18 @@
       }
       c.phi = 0.5 * Math.atan2(sy, sx);              // gradient (across-row) angle, pixel frame (y down)
     }
+    for (const c of cells) {                          // solid panel cells with no texture: borrow the neighbours' direction
+      if (c.ok || c.fill < 0.35) continue; let sx = 0, sy = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const x = c.cx + dx, y = c.cy + dy; if (x < 0 || y < 0 || x >= nc || y >= nc) continue;
+        const o = cells[y * nc + x]; if (o.ok) { sx += o.vx; sy += o.vy; } }
+      if (sx || sy) { c.phi = 0.5 * Math.atan2(sy, sx); c.ok = true; c.borrowed = true; }
+    }
     return cells;
   }
 
   // ---- 3. per cell: profile across the rows -> pitch, centre lines, depth; walk each line -> runs ----
-  function cellSegments(mask, c, mpp) {
+  function cellSegments(mask, c, mpp, gPitch) {
     const nx = Math.cos(c.phi), ny = Math.sin(c.phi), ux = -ny, uy = nx;
     const ox = (c.cx + 0.5) * CELL, oy = (c.cy + 0.5) * CELL, H = 50, B = 2 * H * 2 + 1;   // bins of 0.5 px over +-50 px
     const prof = new Float32Array(B);
@@ -79,16 +86,23 @@
     let best = 0, bestLag = 0; const l0 = Math.round(4.5 / mpp * 2), l1 = Math.round(16 / mpp * 2);
     for (let L = l0; L <= l1; L++) { let s = 0; for (let i = 0; i + L < B; i++) s += (sm[i] - mean) * (sm[i + L] - mean); s /= (B - L); if (s > best) { best = s; bestLag = L; } }
     const pitchPx = bestLag ? bestLag / 2 : 0;
-    let mx = 0; for (const v of sm) mx = Math.max(mx, v);
-    const peaks = [], sep = Math.max(6, (pitchPx || 8) * 2 * 0.6);
-    for (let i = 1; i < B - 1; i++) if (sm[i] >= sm[i - 1] && sm[i] > sm[i + 1] && sm[i] > 0.3 * mx) {
-      if (peaks.length && i - peaks[peaks.length - 1].i < sep) { if (sm[i] > peaks[peaks.length - 1].v) peaks[peaks.length - 1] = { i, v: sm[i] }; continue; }
-      peaks.push({ i, v: sm[i] });
+    let mx = 0, lo = 1e9; for (let i = 20; i < B - 20; i++) { mx = Math.max(mx, sm[i]); if (sm[i] > 0) lo = Math.min(lo, sm[i]); }
+    const contrast = mx ? 1 - lo / mx : 0;
+    if (!gPitch) return { pitchPx: contrast > 0.5 && best > 0 ? pitchPx : 0 };
+    const peaks = [], sep = gPitch * 2 * 0.7;
+    if (contrast > 0.45) {
+      for (let i = 1; i < B - 1; i++) if (sm[i] >= sm[i - 1] && sm[i] > sm[i + 1] && sm[i] > 0.3 * mx) {
+        if (peaks.length && i - peaks[peaks.length - 1].i < sep) { if (sm[i] > peaks[peaks.length - 1].v) peaks[peaks.length - 1] = { i, v: sm[i] }; continue; }
+        peaks.push({ i, v: sm[i] });
+      }
+    } else {                                          // solid panel area: rows not resolved, laid at the measured pitch (estimate)
+      const ph = (((Math.round(nx * 1e3) + ox * nx + oy * ny) % gPitch) + gPitch) % gPitch;  // phase tied to the image, so cells line up
+      for (let t = -H + ((gPitch - ph) % gPitch); t <= H; t += gPitch) { const i = Math.round((t + H) * 2); if (sm[i] > 0) peaks.push({ i, v: mx, flat: true }); }
     }
     const segs = [];
     for (const p of peaks) {
       let a = p.i, b = p.i; while (a > 0 && sm[a] > p.v / 2) a--; while (b < B - 1 && sm[b] > p.v / 2) b++;
-      const depthPx = (b - a) / 2, t = p.i / 2 - H;
+      const depthPx = p.flat ? gPitch * 0.75 : (b - a) / 2, t = p.i / 2 - H;
       const cxp = ox + nx * t, cyp = oy + ny * t;
       let run = null, gap = 0;
       const flush = () => { if (run && run.s1 - run.s0 >= 4) segs.push({ phi: c.phi, depthPx, x0: cxp + ux * run.s0, y0: cyp + uy * run.s0, x1: cxp + ux * run.s1, y1: cyp + uy * run.s1 }); run = null; gap = 0; };
@@ -178,9 +192,10 @@
     const a = toM(0, 0), b = toM(W, 0), mpp = Math.hypot(b[0] - a[0], b[1] - a[1]) / W;
     const { mask, nWeak } = buildMask(d);
     const cells = directions(mask);
-    let segs = [], sp = [];
-    for (const cl of cells) if (cl.ok && cl.phi != null) { const r = cellSegments(mask, cl, mpp); segs = segs.concat(r.segs); sp = sp.concat(r.spacings); }
-    sp.sort((p, q) => p - q); const pitchM = sp.length ? sp[sp.length >> 1] * mpp : 0;
+    const use = cells.filter(cl => cl.ok && cl.phi != null);
+    const sp = use.map(cl => cellSegments(mask, cl, mpp, 0).pitchPx).filter(Boolean).sort((p, q) => p - q);
+    const gPitch = sp.length ? sp[sp.length >> 1] : 7 / mpp, pitchM = gPitch * mpp;   // median row pitch over resolved cells
+    let segs = []; for (const cl of use) segs = segs.concat(cellSegments(mask, cl, mpp, gPitch).segs);
     const rows = mergeRows(segs); for (const r of rows) r.depthM = r.depthPx * mpp;
     const { L, km } = tables(rows, toM, pitchM);
     S.removeWhere(x => x.sat);
@@ -190,7 +205,7 @@
     let vx = 0, vy = 0; for (const r of rows) { const l = Math.hypot(r.pts[1][0] - r.pts[0][0], r.pts[1][1] - r.pts[0][1]); vx += Math.cos(2 * r.phi) * l; vy += Math.sin(2 * r.phi) * l; }
     const pd = 0.5 * Math.atan2(vy, vx), brg = ((Math.atan2(-Math.sin(pd), -Math.cos(pd)) * 180 / Math.PI) % 180 + 180) % 180;
     const stats = { rows: rows.length, km: +km.toFixed(2), pitchM: +pitchM.toFixed(1), bearingDeg: Math.round(brg),
-      cellsWithRows: cells.filter(x => x.ok).length, cells: cells.length, gapPixelsFilled: nWeak, lines: L.length, ms: Math.round(performance.now() - t0), mpp: +mpp.toFixed(3) };
+      cellsWithRows: cells.filter(x => x.ok).length, cellsBorrowed: cells.filter(x => x.borrowed).length, pitchCells: sp.length, cells: cells.length, gapPixelsFilled: nWeak, lines: L.length, ms: Math.round(performance.now() - t0), mpp: +mpp.toFixed(3) };
     if (bt) bt.textContent = `Rows from satellite (${stats.rows})`;
     S.info(`Estimated from satellite imagery, not measured: ${stats.rows} continuous rows, ${stats.km} km of tables over about ${Math.round(W * mpp)} m square. ` +
       `Row pitch about ${stats.pitchM} m (estimate); tables drawn 0.8 m front, 2.4 m back, legs every 5 m (assumed). ${CREDIT}.`);

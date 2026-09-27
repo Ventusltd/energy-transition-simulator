@@ -101,10 +101,11 @@
     const css = document.createElement('style');
     css.textContent = '#fg{position:absolute;right:50px;top:8px;z-index:4;display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:calc(100vw - 66px)}'
       + '#fg input{font:15px monospace;width:min(260px,calc(100vw - 66px));min-height:40px;box-sizing:border-box;padding:8px 10px;border-radius:6px;border:1px solid #456;background:#0b1220;color:#dfe}'
+      + '@media (max-width:600px){#fg{top:auto;right:8px;bottom:172px}#fg input{width:min(220px,calc(100vw - 16px))}}'
       + '#fg input::placeholder{color:#8aa}#fg div{font:12px sans-serif;color:#fdd;background:rgba(0,0,0,.7);padding:4px 8px;border-radius:6px;max-width:260px}#fg div:empty{display:none}';
     document.head.appendChild(css);
     const box = document.createElement('div'); box.id = 'fg';
-    box.innerHTML = '<input id="fg-in" type="text" autocomplete="off" spellcheck="false" placeholder="go repd 6502 · go solar · go bess · go substation 400" aria-label="Find"><div id="fg-msg"></div>';
+    box.innerHTML = '<input id="fg-in" type="text" autocomplete="off" spellcheck="false" placeholder="go repd 6502 · go solar · go bess" aria-label="Find"><div id="fg-msg"></div>';
     document.body.appendChild(box);
     const inp = box.querySelector('input'), msg = box.querySelector('#fg-msg');
     inp.addEventListener('keydown', async e => {

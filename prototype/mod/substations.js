@@ -17,8 +17,11 @@
   var A = 6378137, F = 1 / 298.257223563, E2 = F * (2 - F), D = Math.PI / 180;
   function ecef(lat, lon) { var s = Math.sin(lat * D), c = Math.cos(lat * D), N = A / Math.sqrt(1 - E2 * s * s);
     return [N * c * Math.cos(lon * D), N * c * Math.sin(lon * D), N * (1 - E2) * s]; }
+  function PFm() { return window.__pf && window.__pf.PF; }
   function localFn(lat0, lon0) {
-    if (window.SIM && SIM.toLocal) return function (lat, lon) { var q = SIM.toLocal(lat0, lon0, lat, lon); return [q.x, q.y]; };
+    var PF = PFm();
+    if (PF) { var an = PF.placeKey(lat0, lon0), o = PF.toLocal(an, lat0, lon0, 0);   // the overlay's own tangent plane
+      return function (lat, lon) { var q = PF.toLocal(an, lat, lon, 0); return [q.x - o.x, q.y - o.y]; }; }
     var o = ecef(lat0, lon0), sl = Math.sin(lat0 * D), cl = Math.cos(lat0 * D), so = Math.sin(lon0 * D), co = Math.cos(lon0 * D);
     return function (lat, lon) { var g = ecef(lat, lon), d = [g[0] - o[0], g[1] - o[1], g[2] - o[2]];
       return [-so * d[0] + co * d[1], -sl * co * d[0] - sl * so * d[1] + cl * d[2]]; };
@@ -67,6 +70,13 @@
     var area = 0; for (i = 0; i < n; i++) area += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
     return { cx: cx, cy: cy, ux: ux, uy: uy, hw: w, hd: d, area: Math.abs(area) / 2 };
   }
+  // Put a { lon, lat, lines } block on the overlay's 100 m place lattice and pack its buffer once (as connect-here does).
+  function place(b) {
+    var PF = PFm(); if (!PF) return b;
+    var an = PF.placeKey(b.lat, b.lon), o = PF.toLocal(an, b.lat, b.lon, 0);
+    var L = b.lines.map(function (l) { return [l[0] + o.x, l[1] + o.y, l[2], l[3] + o.x, l[4] + o.y, l[5]]; });
+    b.anchor = an; b.lines = L; b.buf = PF.wireBuffer(an, L); return b;
+  }
   var EST_HALF = function (kv) { return kv >= 275 ? 90 : kv >= 132 ? 40 : kv >= 66 ? 25 : 15; };
 
   // ---- stroke font for the voltage label: 0-9, k, V, / on a 1 x 2 cell ----
@@ -104,12 +114,12 @@
     }
     if (n > 1) seg(L, [f.cx - 0.6 * f.hw * f.ux - f.uy * pd * 2.2, f.cy - 0.6 * f.hw * f.uy + f.ux * pd * 2.2],
                       [f.cx + 0.6 * f.hw * f.ux - f.uy * pd * 2.2, f.cy + 0.6 * f.hw * f.uy + f.ux * pd * 2.2], ph * 2);   // busbar
-    return { lon: s.lon, lat: s.lat, lines: L, sub: s.i, est: dashed, top: Math.max(f.hw, f.hd), f: f };
+    return place({ lon: s.lon, lat: s.lat, lines: L, substation: s.i, est: dashed, top: Math.max(f.hw, f.hd), f: f });
   }
   function labelBlock(s, c, bearing) {
-    var L = [], size = Math.max(4, Math.min(14, c.top / 5));
-    label(L, kvText(s.kv), c.f.cx, c.f.cy, Math.max(12, c.top * 0.3), size, bearing);
-    return { lon: s.lon, lat: s.lat, lines: L, subLabel: s.i };
+    var L = [], t = kvText(s.kv), size = Math.max(2.5, Math.min(7, 1.6 * c.top / (1.5 * t.length))); // text no wider than the compound
+    label(L, t, c.f.cx, c.f.cy, Math.max(9, Math.min(20, c.top * 0.25)), size, bearing);
+    return place({ lon: s.lon, lat: s.lat, lines: L, substationLabel: s.i });
   }
 
   var on = false, built = {}, lastC = null, lastB = null;
@@ -121,12 +131,12 @@
   }
   function refresh(force) {
     var map = SIM.map;
-    if (!on || !pts || map.getZoom() < MINZ) { if (Object.keys(built).length) { SIM.removeWhere(function (b) { return b.sub !== undefined || b.subLabel !== undefined; }); built = {}; SIM.repaint(); } return; }
+    if (!on || !pts || map.getZoom() < MINZ) { if (Object.keys(built).length) { SIM.removeWhere(function (b) { return b.substation !== undefined || b.substationLabel !== undefined; }); built = {}; SIM.repaint(); } return; }
     var cc = map.getCenter(), c = { lon: cc.lng, lat: cc.lat }, br = map.getBearing();
     var moved = !lastC || dist(lastC, c) > RADIUS / 3, turned = lastB === null || Math.abs(((br - lastB + 540) % 360) - 180) > 30;
     if (!force && !moved && !turned) return;
     var keep = {}; nearby(c, RADIUS, 0).slice(0, MAX).forEach(function (o) { keep[o.s.i] = o.s; });
-    SIM.removeWhere(function (b) { return (b.sub !== undefined && !keep[b.sub]) || (b.subLabel !== undefined && (turned || !keep[b.subLabel])); });
+    SIM.removeWhere(function (b) { return (b.substation !== undefined && !keep[b.substation]) || (b.substationLabel !== undefined && (turned || !keep[b.substationLabel])); });
     var nb = {}; for (var i in keep) {
       var s = keep[i], cb = built[i] || compound(s);
       if (!built[i]) SIM.addBlock(cb);
@@ -160,13 +170,13 @@
   function syncBtn() { if (btn) btn.classList.toggle('on', on); }
   function ui() {
     var bar = document.getElementById('bar');
-    btn = document.createElement('button'); btn.textContent = 'Substations';
-    btn.onclick = function () { on = !on; syncBtn(); if (on) { SIM.info(CREDIT); load().then(function () { refresh(true); }); } else refresh(true); };
+    var toggle = function () { on = !on; syncBtn(); if (on) { SIM.info(CREDIT); load().then(function () { refresh(true); }); } else refresh(true); };
+    if (SIM.addButton) btn = SIM.addButton('Substations', toggle); else { btn = document.createElement('button'); btn.textContent = 'Substations'; btn.onclick = toggle; if (bar) bar.appendChild(btn); }
     var inp = document.createElement('input'); inp.placeholder = 'go substation 132'; inp.setAttribute('aria-label', 'Substation command');
     inp.style.cssText = 'font:14px monospace;padding:10px;border-radius:6px;border:1px solid #456;background:#0b1220;color:#dfe;min-height:44px;width:12em;box-sizing:border-box';
     inp.addEventListener('keydown', function (e) { e.stopPropagation(); if (e.key === 'Enter') { if (!command(inp.value)) SIM.info('Try: go substation 132'); inp.blur(); } });
     inp.addEventListener('keyup', function (e) { e.stopPropagation(); });
-    if (bar) { bar.appendChild(btn); bar.appendChild(inp); } else { document.body.appendChild(btn); document.body.appendChild(inp); }
+    (bar || document.body).appendChild(inp);
   }
 
   function start() {

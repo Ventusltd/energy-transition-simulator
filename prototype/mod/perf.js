@@ -9,6 +9,11 @@
 //  4. Shader locations are looked up once per program.
 // Blocks that arrive as plain { lon, lat, lines } (no anchor/buf) are placed with place-frame.mjs, the same way
 // overlay.html places its own, so any module can hand over bare metres.
+// LEAD NOTES (overlay.html): (a) add 'perf' to mod/index.json; nothing else is required. Better still, fold this
+// render into `wire` itself and drop the per-frame bufferData/getAttribLocation/getUniformLocation/queryTerrainElevation.
+// (b) A module that edits b.buf in place must bump b.rev (or call SIM.perf.touch(b)); a new buf object is detected.
+// (c) Phone size (390 px): #here-readout and #pf-readout sit over the 2nd/3rd button rows and intercept taps on
+// "Rows from satellite"; #info covers the map attribution. (d) Measured 27 Sept, E:\swarm\proof\overlay\perf\measure.json.
 (function () {
   'use strict';
   const MOD_URL = (document.currentScript && document.currentScript.src) || location.href;

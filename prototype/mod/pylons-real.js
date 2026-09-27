@@ -125,7 +125,7 @@
       for (const [, t] of cand.slice(0, MAX_TOWERS)) want.add(t.id), live.has(t.id) || live.set(t.id, makeBlock(t));
     }
     for (const [id, bk] of live) if (!want.has(id)) { gl.deleteBuffer(bk.buf); live.delete(id); }
-    if (SIM.info && on && live.size) SIM.info(`Pylons: ${live.size} towers at GridAtlas line vertices (lines © OpenStreetMap contributors, via GridAtlas). Estimated: towers infilled on long runs, tower shape, heights and conductor sag by voltage class; not surveyed.`);
+    if (SIM.info && on && live.size) SIM.info(`Pylons: ${live.size} at GridAtlas line vertices (© OpenStreetMap). Heights, arms, sag and infill towers are estimates.`);
     map.triggerRepaint();
   }
   // Terrain arrives after the first build: re-grade the blocks built on missing heights (their spans too).
