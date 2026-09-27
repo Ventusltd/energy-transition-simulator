@@ -241,4 +241,46 @@ T('(slope10) the scale is said: 5 m blocks from DTM 1 m by default; block 1 on a
   const t = dtmTile(519000, 332000, 4096, 1, () => 0), a = A.slopeBands([t], bx9), c = A.slopeBands([t], bx9, { block: 1 });
   return [A.SLOPE_BLOCK_M === 5 && A.slopeScale(a) === '5 m blocks from DTM 1 m' && A.slopeScale(c) === 'DTM 1 m' && /1 cell central differences/.test(A.slopeText(c, false)), A.slopeScale(a) + ' | ' + A.slopeScale(c)]; });
 
+// 16. Round 12: DESIGNATIONS (Natural England SSSI, National Landscapes, National Parks, Ramsar, SAC, SPA) in the site box.
+// Made-up geometry and codes only; no site names anywhere (the query never asks for them).
+const bx12 = A.centredBox(520900, 333800), X0 = bx12.e0, Y0 = bx12.n0, AT = '2026-09-28T00:40:12.000Z';
+const L12 = id => A.DES.layers.find(L => L.id === id);
+const okAll = (feats, extra) => { const o = {}; A.DES.layers.forEach(L => { const pl = A.parseDes(Object.assign({ features: feats[L.id] || [] }, extra && extra[L.id]), L); o[L.id] = { res: A.desAssess(pl, bx12), at: AT }; }); return o; };
+T('(des12) six layers, one envelope query each in EPSG:27700 on the centred box; code field only, never NAME', () => {
+  const us = A.DES.layers.map(L => A.desQueryUrl(L, bx12));
+  const want = ['SSSI_England', 'Areas_of_Outstanding_Natural_Beauty_England', 'National_Parks_England', 'Ramsar_England', 'Special_Areas_of_Conservation_England', 'Special_Protection_Areas_England'];
+  return [us.length === 6 && us.every((u, i) => u.includes('/' + want[i] + '/FeatureServer/0/query?') && /geometry=519936%2C332800%2C521984%2C334848/.test(u) && /inSR=27700/.test(u) && /esriGeometryEnvelope/.test(u) && !/NAME/i.test(u.split('outFields=')[1].split('&')[0])),
+    us[0].slice(0, 150)]; });
+T('(des12) licence OGL v3.0 and NE attribution recorded and in the credit line', () => {
+  const c = A.desCredit(); return [A.DES.licence === 'Open Government Licence v3.0' && /Natural England copyright/.test(A.DES.attribution) && c.includes('Open Government Licence v3.0') && c.includes(A.DES.attribution) && /SSSI England/.test(c) && /Special Protection Areas England/.test(c), c.slice(0, 120)]; });
+T('(des12) EMPTY: successful empty answers say "none in box", tagged [derived, NE <layer>, queried <time>]', () => {
+  const t = A.desText(okAll({}), false), tp = A.desText(okAll({}), true);
+  return [t.includes('SSSI: none in box [derived, NE SSSI_England, queried 00:40 UTC]') && t.includes('SPA: none in box [derived, NE Special_Protection_Areas_England, queried 00:40 UTC]')
+    && (t.match(/none in box/g) || []).length === 6 && !/fetch failed/.test(t) && /land outside it not checked/.test(t) && (tp.match(/none in box/g) || []).length === 6, t.split('\n').slice(0, 2).join(' | ')]; });
+T('(des12) HIT: SSSI strip 256 m wide overhanging the box (12.5%), nearest from box centre; SAC contains the centre (0 m)', () => {
+  const des = okAll({ SSSI: [{ attributes: { REF_CODE: '1000001' }, geometry: { rings: [sq(X0 - 100, Y0 - 100, X0 + 256, Y0 + 2148)] } }],
+    SAC: [{ attributes: { SAC_CODE: 'UK0000001' }, geometry: { rings: [sq(X0 + 900, Y0 + 900, X0 + 1100, Y0 + 1100)] } }] });
+  const s1 = des.SSSI.res, s2 = des.SAC.res, t = A.desText(des, false), tp = A.desText(des, true);
+  return [s1.n === 1 && near(s1.share, 0.125, 1e-12) && near(s1.ha, 256 * 2048 / 1e4, 1e-9) && near(s1.nearestM, 1024 - 256, 1e-9) && s2.n === 1 && s2.nearestM === 0 && near(s2.ha, 4, 1e-9)
+    && t.includes('SSSI: 1 site in box, 12.5% of box (52.4 ha); nearest 768 m from box centre [derived, NE SSSI_England, queried 00:40 UTC]')
+    && t.includes('SAC: 1 site in box, 1.0% of box (4.0 ha); nearest 0 m (box centre inside)') && t.includes('Ramsar: none in box') && tp.includes('SSSI 1 in box, 12.5%, nearest 768 m from box centre [derived]') && !/1000001|UK0000001/.test(t + tp),
+    t.split('\n').slice(1, 2) + ' | ' + s2.nearestM]; });
+T('(des12) HIT geometry: a hole around the centre is not "inside"; clipped outline lies in the box; outside-box feature counts 0 but gives nearest', () => {
+  const ring = [sq(X0 + 500, Y0 + 500, X0 + 1500, Y0 + 1500), sq(X0 + 900, Y0 + 900, X0 + 1150, Y0 + 1150, false)];
+  const r = A.desAssess(A.parseDes({ features: [{ attributes: {}, geometry: { rings: ring } }] }, L12('SPA')), bx12);
+  const o = A.desAssess(A.parseDes({ features: [{ attributes: {}, geometry: { rings: [sq(X0 + 2048, Y0, X0 + 2548, Y0 + 500)] } }] }, L12('SPA')), bx12);
+  const inside = r.clipped.every(f => f.rings.every(g => g.every(p => p[0] >= bx12.e0 && p[0] <= bx12.e1 && p[1] >= bx12.n0 && p[1] <= bx12.n1)));
+  return [r.n === 1 && near(r.nearestM, 124, 1e-9) && near(r.ha, (1e6 - 250 * 250) / 1e4, 1e-9) && inside && o.n === 0 && near(o.nearestM, Math.hypot(1024, 524), 1e-9)
+    && A.desLine(L12('SPA'), { res: o, at: AT }, false).startsWith('SPA: none in box'), r.nearestM + ' / ' + o.n + ' ' + o.nearestM]; });
+T('(des12) FAILURE: an error answer throws (never "none"); a failed layer says "designations not checked (fetch failed)"; all failed says it once', () => {
+  let threw = 0; [{ error: { code: 500, message: 'Unable to complete operation.' } }, {}, null].forEach(j => { try { A.parseDes(j, L12('SSSI')); } catch (x) { threw++; } });
+  const part = okAll({}); part.NP = { err: 'HTTP 503' };
+  const t = A.desText(part, false), tp = A.desText(part, true), all = {}; A.DES.layers.forEach(L => { all[L.id] = { err: 'Failed to fetch' }; });
+  const ta = A.desText(all, false), tn = A.desText(null, true);
+  return [threw === 3 && t.includes('National Park: designations not checked (fetch failed) [NE National_Parks_England, HTTP 503]') && !/National Park: none/.test(t) && (t.match(/none in box/g) || []).length === 5
+    && tp.includes('National Park: designations not checked (fetch failed)') && ta === 'DESIGNATIONS: designations not checked (fetch failed).' && tn === ta && !/none/.test(ta), t.split('\n')[3] + ' || ' + ta]; });
+T('(des12) transfer limit hit: never "none in box"; says not fully checked', () => {
+  const d = okAll({}, { SPA: { exceededTransferLimit: true } }), t = A.desText(d, false);
+  return [t.includes('SPA: not fully checked (service transfer limit hit)') && !/SPA: none/.test(t), t.split('\n')[6]]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

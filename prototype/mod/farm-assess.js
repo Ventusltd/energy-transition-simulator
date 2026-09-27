@@ -20,6 +20,7 @@
 // between EA requests, never on move. The share of the box in each zone layer is DERIVED; the layers can overlap, so the
 // two shares are per layer and are not added. Planning flood zones, not a site flood risk assessment.
 // Round 9: SLOPE line from the R5 DTM tile the stream module already streamed (see slopeBands); never fetches heights.
+// Round 12: DESIGNATIONS line (Natural England SSSI, National Landscapes, National Parks, Ramsar, SAC, SPA) for the box.
 // Commands: button "Assess land", or type "assess here" (own box, or the find box). ?assess=1 assesses on arrival.
 (function (root) {
   'use strict';
@@ -259,35 +260,117 @@
       : '1 cell central differences') + '; over-10° ' + (sl.block > sl.res ? 'blocks' : 'cells') + ' outlined on the map; survey year not read.';
   }
   function slopeCredit(sl) { return sl ? 'Slope source: ' + DTM.by + ', ' + sl.product + (sl.sha.length ? ' (receipt ' + sl.sha.join(', ') + ')' : '') + '. ' + DTM.licence + '. ' + DTM.attribution : ''; }
+  // Round 12: DESIGNATIONS in the site box, from Natural England's open data (England only). ONE envelope query per layer
+  // (six layers), cached by the box key, at least 1.1 s apart on the NE host (one queue shared with the ALC query), never
+  // on move. Licence and attribution read on each layer's own ArcGIS item page on 28 Sept 2026: all six say "Use of this
+  // data is subject to the Open Government Licence" (v3) with the attribution below. Only the code field is asked for:
+  // site names are never fetched or shown. Area in box is DERIVED (clipped planar area, BNG metres); the nearest distance
+  // is DERIVED from the box centre to the unclipped outline returned (0 when the centre lies inside). The query is by the
+  // box, so a designation just outside the box is not seen: "none in box" says nothing about the land beyond it.
+  var DES = { base: 'https://services.arcgis.com/JJzESW51TqeY9uat/ArcGIS/rest/services/', by: 'Natural England',
+    licence: 'Open Government Licence v3.0', read: '2026-09-28',
+    attribution: '© Natural England copyright. Contains Ordnance Survey data © Crown copyright and database right 2024.',
+    layers: [
+      { id: 'SSSI', label: 'SSSI', svc: 'SSSI_England', code: 'REF_CODE', item: 'f10cbb4425154bfda349ccf493487a80' },
+      { id: 'NL', label: 'National Landscape (AONB)', svc: 'Areas_of_Outstanding_Natural_Beauty_England', code: 'CODE', item: '6f2ad07d91304ad79cdecd52489d5046' },
+      { id: 'NP', label: 'National Park', svc: 'National_Parks_England', code: 'CODE', item: 'd333c7529754444894e2d7f5044d1bbf' },
+      { id: 'RAMSAR', label: 'Ramsar', svc: 'Ramsar_England', code: 'CODE', item: '13b5f06edc88471db479b49b4ac04a43' },
+      { id: 'SAC', label: 'SAC', svc: 'Special_Areas_of_Conservation_England', code: 'SAC_CODE', item: 'e4142658906c498fa37f0a20d3fdfcff' },
+      { id: 'SPA', label: 'SPA', svc: 'Special_Protection_Areas_England', code: 'SPA_CODE', item: 'e6ee43be14554663b0a80bb42aa4e671' }] };
+  var DES_FAIL = 'designations not checked (fetch failed)';
+  function desQueryUrl(L, b) {
+    return DES.base + L.svc + '/FeatureServer/0/query?where=1%3D1&geometry=' + [b.e0, b.n0, b.e1, b.n1].join('%2C') + '&geometryType=esriGeometryEnvelope&inSR=27700'
+      + '&spatialRel=esriSpatialRelIntersects&outFields=' + L.code + '&returnGeometry=true&outSR=27700&maxAllowableOffset=5&geometryPrecision=1&f=json';
+  }
+  // Layer answer -> { feats:[{code, rings}], exceeded }. An error or a missing features array throws: never "none".
+  function parseDes(j, L) {
+    if (!j || j.error || !Array.isArray(j.features)) throw new Error((j && j.error && j.error.message) || 'no features in answer');
+    return { exceeded: !!j.exceededTransferLimit, feats: j.features.map(function (f) { return { code: String((f.attributes && f.attributes[L.code]) || ''), rings: (f.geometry && f.geometry.rings) || [] }; }) };
+  }
+  function inRings(p, rings) { var c = false;   // even-odd over all rings of one feature (holes count out)
+    rings.forEach(function (r) { for (var i = 0, j = r.length - 1; i < r.length; j = i++) { var a = r[i], q = r[j];
+      if ((a[1] > p[1]) !== (q[1] > p[1]) && p[0] < (q[0] - a[0]) * (p[1] - a[1]) / (q[1] - a[1]) + a[0]) c = !c; } }); return c; }
+  function segDist(p, a, q) { var dx = q[0] - a[0], dy = q[1] - a[1], L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)) : 0;
+    return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy); }
+  // Parsed layer -> { n (features with area in box), ha, share, nearestM, clipped, exceeded }. nearestM null when nothing returned.
+  function desAssess(pl, b) {
+    var boxA = (b.e1 - b.e0) * (b.n1 - b.n0), c = [(b.e0 + b.e1) / 2, (b.n0 + b.n1) / 2], a = 0, n = 0, near = null, clipped = [];
+    pl.feats.forEach(function (f) { var fa = 0, kept = [];
+      f.rings.forEach(function (r) { var k = clipRing(r, b); if (k.length >= 3) { fa += signedArea(k); kept.push(k); } });
+      fa = Math.abs(fa); if (fa >= 1) { n++; a += fa; clipped.push({ rings: kept, area: fa }); }
+      var d = inRings(c, f.rings) ? 0 : Infinity;
+      if (d) f.rings.forEach(function (r) { for (var i = 0; i + 1 < r.length; i++) d = Math.min(d, segDist(c, r[i], r[i + 1])); });
+      if (isFinite(d) && (near === null || d < near)) near = d; });
+    a = Math.min(a, boxA); return { n: n, ha: a / 1e4, share: a / boxA, nearestM: near, clipped: clipped, exceeded: pl.exceeded };
+  }
+  function hhmm(at) { return at ? String(at).slice(11, 16) + ' UTC' : 'time unknown'; }
+  // One layer's line. r: { err } | { res: desAssess(...), at }. 'none in box' only after a successful, complete, empty answer.
+  function desLine(L, r, phone) {
+    var src = ' [derived, NE ' + L.svc + ', queried ' + hhmm(r && r.at) + ']';
+    if (!r || r.err || !r.res) return L.label + ': ' + DES_FAIL + (phone ? '' : ' [NE ' + L.svc + (r && r.err ? ', ' + String(r.err).slice(0, 60) : '') + ']');
+    var x = r.res;
+    if (x.exceeded) return L.label + ': not fully checked (service transfer limit hit)' + (phone ? '' : ' [NE ' + L.svc + ', queried ' + hhmm(r.at) + ']');
+    if (!x.n) return L.label + ': none in box' + (phone ? '' : src);
+    var m = Math.round(x.nearestM), nm = m === 0 ? '0 m (box centre inside)' : m + ' m from box centre';
+    if (phone) return L.label + ' ' + x.n + ' in box, ' + (100 * x.share).toFixed(1) + '%, nearest ' + nm + ' [derived]';
+    return L.label + ': ' + x.n + (x.n === 1 ? ' site' : ' sites') + ' in box, ' + (100 * x.share).toFixed(1) + '% of box (' + x.ha.toFixed(1) + ' ha); nearest ' + nm + src;
+  }
+  // The DESIGNATIONS lines. des: { SSSI: r, NL: r, ... } or null (nothing fetched).
+  function desText(des, phone) {
+    if (!des || DES.layers.every(function (L) { var r = des[L.id]; return !r || r.err || !r.res; })) return 'DESIGNATIONS: ' + DES_FAIL + '.';
+    if (phone) return 'DESIGNATIONS (England, box only): ' + DES.layers.map(function (L) { return desLine(L, des[L.id], true); }).join('; ') + '. NE, OGL v3.0';
+    return ['DESIGNATIONS (Natural England statutory sites, England only; this site box only, land outside it not checked; not a planning decision):']
+      .concat(DES.layers.map(function (L) { return '  ' + desLine(L, des[L.id], false); })).join('\n');
+  }
+  function desCredit() { return 'Designations source: ' + DES.by + ' open data, ' + DES.layers.map(function (L) { return L.svc.replace(/_/g, ' '); }).join(', ')
+    + ' (licence read on each ArcGIS item page, ' + DES.read + '). ' + DES.licence + '. ' + DES.attribution; }
   var INFO_KEYS = ['whiteSpace', 'bottom', 'maxHeight', 'overflowY', 'maxWidth', 'boxSizing', 'zIndex', 'background'], FARM_HEAD = 'LAND: site box';
   function snapInfo(el) { var st = {}; INFO_KEYS.forEach(function (k) { st[k] = el.style[k]; }); return { style: st, lift: el.classList.contains('fa-lift') }; }
   function isFarmText(t) { return String(t || '').indexOf(FARM_HEAD) === 0; }
   function restoreInfo(prev, el) { INFO_KEYS.forEach(function (k) { el.style[k] = prev.style[k]; }); if (!prev.lift) el.classList.remove('fa-lift'); }
   // Called on each #info mutation while the farmer result is lifted. Returns true when it restored (the watch is then over).
   function infoChanged(prev, el) { if (!prev || isFarmText(el.textContent)) return false; restoreInfo(prev, el); return true; }
-  var core = { DTM: DTM, SLOPE_NONE: SLOPE_NONE, slopeBands: slopeBands, slopeText: slopeText, slopeScale: slopeScale, SLOPE_BLOCK_M: SLOPE_BLOCK_M, slopeCredit: slopeCredit, gridRef: gridRef, landHead: landHead, INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
+  var core = { DES: DES, DES_FAIL: DES_FAIL, desQueryUrl: desQueryUrl, parseDes: parseDes, desAssess: desAssess, desLine: desLine, desText: desText, desCredit: desCredit, inRings: inRings, DTM: DTM, SLOPE_NONE: SLOPE_NONE, slopeBands: slopeBands, slopeText: slopeText, slopeScale: slopeScale, SLOPE_BLOCK_M: SLOPE_BLOCK_M, slopeCredit: slopeCredit, gridRef: gridRef, landHead: landHead, INFO_KEYS: INFO_KEYS, FARM_HEAD: FARM_HEAD, snapInfo: snapInfo, isFarmText: isFarmText, restoreInfo: restoreInfo, infoChanged: infoChanged, PANEL: PANEL, panelLayout: panelLayout, SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
   // ---------------- browser ----------------
-  var cache = {}, fzCache = {}, lastEa = 0, lastReq = 0, subs = null, markers = [], busy = false, infoPrev = null, infoObs = null;
+  var cache = {}, fzCache = {}, desCache = {}, neQ = Promise.resolve(), lastEa = 0, lastReq = 0, subs = null, markers = [], busy = false, infoPrev = null, infoObs = null;
   function PF() { return root.__pf && root.__pf.PF; }
   function wait(fn) { if (root.SIM && PF()) fn(); else setTimeout(function () { wait(fn); }, 300); }
   function loadSubs() { if (subs) return subs;
     subs = fetch(GA).then(function (r) { return r.json(); }).then(function (j) {
       return j.features.map(function (f) { var c = f.geometry.coordinates; return { lon: c[0], lat: c[1], kv: kvList(f.properties && f.properties.voltage), op: netOperator(f.properties && f.properties.operator) }; }); });
     return subs; }
+  // Round 12: every Natural England request (ALC and the six designation layers) goes through ONE queue, so they are
+  // strictly one at a time and at least MIN_GAP_MS apart, start to start.
+  function nePaced(fn) {
+    var run = neQ.then(function () { var gap = Math.max(0, lastReq + MIN_GAP_MS - Date.now()); return new Promise(function (ok) { setTimeout(ok, gap); }); })
+      .then(function () { lastReq = Date.now(); return fn(); });
+    neQ = run.catch(function () {}); return run;
+  }
   function fetchAlc(b) {
     if (cache[b.key]) return Promise.resolve(cache[b.key]);
-    var gap = Math.max(0, lastReq + MIN_GAP_MS - Date.now());
-    return new Promise(function (ok) { setTimeout(ok, gap); }).then(function () {
-      lastReq = Date.now(); var t0 = performance.now();
+    return nePaced(function () {
+      var t0 = performance.now();
       return fetch(queryUrl(b)).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function (j) {
         if (j.error) throw new Error(j.error.message || 'service error');
         var feats = (j.features || []).map(function (f) { return { grade: String(f.attributes.ALC_GRADE || 'unknown'), rings: (f.geometry && f.geometry.rings) || [] }; });
         var rec = { feats: feats, exceeded: !!j.exceededTransferLimit, ms: Math.round(performance.now() - t0), at: new Date().toISOString() };
         cache[b.key] = rec; return rec; });
     });
+  }
+  // Round 12: one query per designation layer for this box; a layer that answered is cached by the box key, a failed one
+  // is kept as { err } for this report only (asked again on the next assess). Never rejects.
+  function fetchDes(b) {
+    var c = desCache[b.key] || (desCache[b.key] = {}), out = {};
+    return Promise.all(DES.layers.map(function (L) {
+      if (c[L.id]) { out[L.id] = c[L.id]; return null; }
+      return nePaced(function () {
+        return fetch(desQueryUrl(L, b)).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function (j) {
+          var pl = parseDes(j, L), rec = { res: desAssess(pl, b), at: new Date().toISOString() }; c[L.id] = rec; out[L.id] = rec; });
+      }).catch(function (e) { out[L.id] = { err: e.message || 'fetch failed' }; });
+    })).then(function () { return out; });
   }
   // One EA request per assess, cached by the box key, at least 40 s after the previous EA request.
   function fetchFlood(b, say) {
@@ -317,7 +400,7 @@
     el.style.cssText = 'font:11px sans-serif;color:#dfe;background:rgba(0,20,30,.78);border:1px solid ' + (border || '#6cf') + ';padding:3px 6px;border-radius:4px;max-width:210px;pointer-events:none;white-space:normal';
     el.innerHTML = html; markers.push(new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(SIM.map));
   }
-  function draw(b, res, ctr, fz) {
+  function draw(b, res, ctr, fz, des) {
     var P = PF(), c = P.fromBng((b.e0 + b.e1) / 2, (b.n0 + b.n1) / 2), an = P.placeKey(c.lat, c.lon);
     // Drape on the map's terrain: each vertex carries its ground height relative to the anchor (the render adds the
     // anchor's own height), so outlines are not hidden by hills. Terrain is the open AWS model: an estimate.
@@ -350,6 +433,14 @@
         var v = r0[Math.floor(r0.length * (k === 'fz3' ? 0.25 : 0.6))], gg = P.fromBng(v[0], v[1]);   // on the outline (zones are long and thin)
         label(gg.lon, gg.lat, '<b>' + (k === 'fz3' ? 'Flood Zone 3' : 'Flood Zone 2') + '</b> · ' + fz[k].ha.toFixed(0) + ' ha in box<br>EA Flood Map for Planning · OGL v3.0 · zones Nov 2023, edited ' + (k === 'fz3' ? '2024-05-09' : '2025-01-01'), '#39f'); }
     });
+    if (des) DES.layers.forEach(function (Ly) {   // round 12: designation outlines in the box, 4 m up, posts every 20th vertex; no names
+      var r = des[Ly.id]; if (!r || !r.res || !r.res.n) return; var big = null;
+      r.res.clipped.forEach(function (f) { f.rings.forEach(function (rg) { var ll = rg.map(function (p) { return loc(p[0], p[1]); });
+        for (var q = 0; q < ll.length; q++) { var p1 = ll[q], p2 = ll[(q + 1) % ll.length]; L.push([p1[0], p1[1], p1[2] + 4, p2[0], p2[1], p2[2] + 4]); if (q % 20 === 0) L.push([p1[0], p1[1], p1[2], p1[0], p1[1], p1[2] + 4]); } });
+        if (!big || f.area > big.area) big = f; });
+      var r0 = big.rings[0], v = r0[Math.floor(r0.length * 0.4)], gg = P.fromBng(v[0], v[1]);
+      label(gg.lon, gg.lat, '<b>' + Ly.label + '</b> · ' + r.res.ha.toFixed(1) + ' ha in box<br>Natural England ' + Ly.svc.replace(/_/g, ' ') + ' · OGL v3.0', '#c9f');
+    });
     SIM.addBlock({ lon: an.lon, lat: an.lat, anchor: an, lines: L, buf: P.wireBuffer(an, L), farmAssess: true });
   }
   // Round 10: the over-10 deg blocks as ONE outline wire layer (farmAssess, kind slope-over-10), so slope is geometry.
@@ -375,7 +466,11 @@
       var t = LS.tiles.get(e + '_' + n); if (t && t.dtm && t.dtm.geo && t.dtm.mask) out.push(t.dtm); }
     return out;
   }
-  function report(b, rec, res, sub, c, fz, fzErr) {
+  // A point on a designation outline that is not on the box edge (for the walk to look at the outline on the imagery).
+  function desProbe(b, r) { if (!r || !r.res || !r.res.n) return null; var best = null;
+    r.res.clipped.forEach(function (f) { f.rings.forEach(function (rg) { rg.forEach(function (p) { var m = edgeMargin(b, p[0], p[1]); if (m > 20 && (!best || m < best.m)) best = { m: m, p: p }; }); }); });
+    if (!best) return null; var g = PF().fromBng(best.p[0], best.p[1]); return { lon: g.lon, lat: g.lat, e: best.p[0], n: best.p[1] }; }
+  function report(b, rec, res, sub, c, fz, fzErr, des) {
     var sl = slopeBands(streamedDtms(b), b, { edges: true }); drawSlope(b, sl);
     var pct = function (x) { return (100 * x).toFixed(1) + '%'; };
     var lines = [landHead(b) + ' (2,048 m, centred on arrival, edges on 256 m BNG grid, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
@@ -384,19 +479,24 @@
     if (rec.exceeded) lines.push('  WARNING: service transfer limit hit; shares are incomplete.');
     lines.push(slopeText(sl, false));
     lines.push(floodText(fz, false, fzErr));
+    lines.push(desText(des, false));
     lines.push(gridText(sub, false));
     if (fz) lines.push('Flood source: ' + FZ.by + ', ' + FZ.name + ' (' + FZ.date + '). ' + FZ.licence + '. ' + FZ.attribution + ' One query, ' + fz.ms + ' ms, ' + fz.at.slice(0, 19) + 'Z.');
     if (sl) lines.push(slopeCredit(sl));
+    lines.push(desCredit());
     lines.push('Source: ' + SRC.by + ', ' + SRC.name + '. ' + SRC.licence + '. ' + SRC.attribution + ' One query, ' + rec.ms + ' ms, ' + rec.at.slice(0, 19) + 'Z.');
     var cb = PF().toBng(c[1], c[0]);
     root.__farmAssess = { box: b, centreBng: { e: cb.e, n: cb.n }, edgeMarginM: edgeMargin(b, cb.e, cb.n), rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at,
       flood: fz ? { fz3: { ha: fz.fz3.ha, share: fz.fz3.share }, fz2: { ha: fz.fz2.ha, share: fz.fz2.share }, exceeded: fz.exceeded, fetchedAt: fz.at, ms: fz.ms } : null,
       floodError: fz ? null : (fzErr || 'no answer'), floodLine: floodText(fz, innerWidth < 600, fzErr),
-      slope: sl ? { bands: sl.bands, assessedHa: sl.assessedHa, cover: sl.cover, res: sl.res, block: sl.block, tiles: sl.tiles, sha: sl.sha, outlineSegs: sl.edges.length, outlineCut: sl.edgesCut } : null, slopeLine: slopeText(sl, innerWidth < 600) };
+      slope: sl ? { bands: sl.bands, assessedHa: sl.assessedHa, cover: sl.cover, res: sl.res, block: sl.block, tiles: sl.tiles, sha: sl.sha, outlineSegs: sl.edges.length, outlineCut: sl.edgesCut } : null, slopeLine: slopeText(sl, innerWidth < 600),
+      designations: DES.layers.map(function (L) { var r = des && des[L.id]; return { id: L.id, svc: L.svc, err: r ? r.err || null : 'no answer', at: r && r.at || null,
+        n: r && r.res ? r.res.n : null, ha: r && r.res ? r.res.ha : null, share: r && r.res ? r.res.share : null, nearestM: r && r.res ? r.res.nearestM : null, exceeded: r && r.res ? r.res.exceeded : null, probe: desProbe(b, r) }; }),
+      desLine: desText(des, innerWidth < 600) };
     if (innerWidth < 600) lines = [lines[0].replace(' [derived, box centre, OS grid ref]', ' [derived]').replace(' (2,048 m, centred on arrival, edges on 256 m BNG grid, ', ' (centred on arrival, ').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
-        [grade3Text(res, true), slopeText(sl, true), floodText(fz, true, fzErr), gridText(sub, true),
-         'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '') + (sl ? ' EA LiDAR DTM, OGL v3.0, © EA and database right.' : '')]);
+        [grade3Text(res, true), slopeText(sl, true), floodText(fz, true, fzErr), desText(des, true), gridText(sub, true),
+         'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '') + (sl ? ' EA LiDAR DTM, OGL v3.0, © EA and database right.' : '') + ' NE designations, OGL v3.0, © Natural England; © Crown copyright 2024.']);
     var el = document.getElementById('info');
     if (el && !infoPrev) infoPrev = snapInfo(el);   // first farmer result since the last restore: record the originals
     SIM.info(lines.join('\n')); if (el) { el.style.whiteSpace = 'pre-wrap'; el.classList.add('fa-lift'); el.scrollTop = 0; layoutPanel(); watchInfo(el); }
@@ -415,9 +515,9 @@
     SIM.info('Assessing land in site box ' + b.key + ' (one request to Natural England)...');
     var fzErr = null, fzP = fetchFlood(b, function (s) { SIM.info('Assessing land in site box ' + b.key + '; waiting ' + s + ' s before asking the Environment Agency (at least 40 s between requests)...'); })
       .then(function (fl) { var r = floodShares(fl, b); r.ms = fl.ms; r.at = fl.at; return r; }, function (e) { fzErr = e.message; return null; });
-    Promise.all([fetchAlc(b), loadSubs().catch(function () { return []; }), fzP]).then(function (x) {
-      var rec = x[0], res = assessBox(rec.feats, b), sub = nearest(x[1], c.lat, c.lng), fz = x[2];
-      clearDraw(); draw(b, res, [c.lng, c.lat], fz); report(b, rec, res, sub, [c.lng, c.lat], fz, fzErr);
+    Promise.all([fetchAlc(b), loadSubs().catch(function () { return []; }), fzP, fetchDes(b)]).then(function (x) {
+      var rec = x[0], res = assessBox(rec.feats, b), sub = nearest(x[1], c.lat, c.lng), fz = x[2], des = x[3];
+      clearDraw(); draw(b, res, [c.lng, c.lat], fz, des); report(b, rec, res, sub, [c.lng, c.lat], fz, fzErr, des);
     }).catch(function (e) { SIM.info('Assess land: Natural England service did not answer (' + e.message + '). Nothing drawn; no value guessed.'); })
       .then(function () { busy = false; });
   }
