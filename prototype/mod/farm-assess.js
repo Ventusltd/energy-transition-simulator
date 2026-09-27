@@ -14,6 +14,11 @@
 // Honest limits, shown on screen: the provisional ALC is a 1:250,000 map digitised from 1970s one-inch maps; it does
 // NOT split grade 3 into 3a (best and most versatile) and 3b, so BMV here is "grades 1 and 2, plus an unknown part of 3".
 // It is not a field survey. Licence (confirmed on the source item page, 27 Sept 2026): Open Government Licence v3.0.
+// Round 4 layer: Environment Agency Flood Map for Planning (Rivers and Sea), Flood Zones 3 and 2, from the EA's own
+// ArcGIS item 510b860c094046f7813d86811a646543 (licence read there 27 Sept 2026: OGL v3 for both zone datasets). ONE
+// service-level query per assess (both layers in one envelope request), cached by the same c<e>_<n> key, at least 40 s
+// between EA requests, never on move. The share of the box in each zone layer is DERIVED; the layers can overlap, so the
+// two shares are per layer and are not added. Planning flood zones, not a site flood risk assessment.
 // Commands: button "Assess land", or type "assess here" (own box, or the find box). ?assess=1 assesses on arrival.
 (function (root) {
   'use strict';
@@ -26,6 +31,17 @@
     attribution: '© Natural England copyright. Contains Ordnance Survey data © Crown copyright and database right 2026.',
     date: 'service data last edited 2024-11-26; map scale 1:250,000 (digitised from 1970s one-inch maps)'
   };
+  var FZ = {
+    name: 'Flood Map for Planning (Rivers and Sea), Flood Zones 3 and 2',
+    by: 'Environment Agency',
+    url: 'https://services1.arcgis.com/JZM7qJpmv7vJ0Hzx/arcgis/rest/services/Flood_Map_for_Planning/FeatureServer/query',
+    item: 'https://www.arcgis.com/home/item.html?id=510b860c094046f7813d86811a646543',
+    licence: 'Open Government Licence v3.0',
+    attribution: '© Environment Agency copyright and/or database right 2024. All rights reserved. Some features of this map are based on digital spatial data from the Centre for Ecology & Hydrology, © NERC (CEH). © Crown Copyright and Database Rights 2024 OS AC0000807064.',
+    date: 'zones published Nov 2023 (EA item); service data edited FZ3 2024-05-09, FZ2 2025-01-01; may predate the latest EA national update',
+    caveat: 'planning flood zones, not a site flood risk assessment'
+  };
+  var EA_GAP_MS = 40000;
   var GA = 'https://ventusltd.github.io/gridatlas/atlas/releases/202608300453-atlas-v9/data/grid_substations.geojson';
   var GA_SRC = 'GridAtlas substations from OpenStreetMap (© OpenStreetMap contributors, ODbL)';
   var GRID_WARN = 'may be a private or generator substation; not a connection point or offer; capacity not assessed';
@@ -107,12 +123,46 @@
     return SRC.url + '?where=1%3D1&geometry=' + [b.e0, b.n0, b.e1, b.n1].join('%2C') + '&geometryType=esriGeometryEnvelope&inSR=27700'
       + '&spatialRel=esriSpatialRelIntersects&outFields=ALC_GRADE&returnGeometry=true&outSR=27700&maxAllowableOffset=5&geometryPrecision=1&f=json';
   }
-  var core = { SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl };
+  // ---- round 4: flood zones ----
+  function floodQueryUrl(b) {
+    return FZ.url + '?layerDefs=' + encodeURIComponent('{"1":"1=1","2":"1=1"}') + '&geometry=' + [b.e0, b.n0, b.e1, b.n1].join('%2C')
+      + '&geometryType=esriGeometryEnvelope&inSR=27700&spatialRel=esriSpatialRelIntersects&returnGeometry=true&outSR=27700&maxAllowableOffset=5&geometryPrecision=1&f=json';
+  }
+  // Service-level answer { layers:[{id, features:[{geometry:{rings}}], exceededTransferLimit}] } -> { fz3:[rings...], fz2:[...] }.
+  function parseFlood(j) {
+    if (!j || j.error || !Array.isArray(j.layers)) throw new Error((j && j.error && j.error.message) || 'no layers in answer');
+    var out = { fz3: [], fz2: [], exceeded: false };
+    j.layers.forEach(function (l) { var k = l.id === 1 ? 'fz3' : l.id === 2 ? 'fz2' : null; if (!k) return;
+      if (l.exceededTransferLimit) out.exceeded = true;
+      (l.features || []).forEach(function (f) { if (f.geometry && f.geometry.rings) out[k].push(f.geometry.rings); }); });
+    return out;
+  }
+  // Clipped planar area of each zone layer in the box (holes subtract via ring orientation), capped at the box area.
+  function floodShares(fl, b) {
+    var boxA = (b.e1 - b.e0) * (b.n1 - b.n0), res = { boxHa: boxA / 1e4, exceeded: !!fl.exceeded, clipped: { fz3: [], fz2: [] } };
+    ['fz3', 'fz2'].forEach(function (k) { var a = 0;
+      fl[k].forEach(function (rings) { var fa = 0, kept = [];
+        rings.forEach(function (r) { var c = clipRing(r, b); if (c.length >= 3) { fa += signedArea(c); kept.push(c); } });
+        fa = Math.abs(fa); if (fa >= 1) { a += fa; res.clipped[k].push({ rings: kept, area: fa }); } });
+      a = Math.min(a, boxA); res[k] = { ha: a / 1e4, share: a / boxA }; });
+    return res;
+  }
+  // The FLOOD line, one place. No answer -> says so and shows no value.
+  function floodText(res, phone, err) {
+    if (!res) return phone ? 'FLOOD: EA service did not answer; no value shown.'
+      : 'FLOOD: Environment Agency Flood Map for Planning did not answer' + (err ? ' (' + err + ')' : '') + '; no value shown.';
+    var f = function (z) { return (100 * z.share).toFixed(1) + '% (' + z.ha.toFixed(0) + ' ha)'; };
+    if (phone) return 'FLOOD: Zone 3 ' + (100 * res.fz3.share).toFixed(1) + '%, Zone 2 ' + (100 * res.fz2.share).toFixed(1) + '% [derived]; ' + FZ.caveat + '. EA, OGL v3.0';
+    return 'FLOOD (EA Flood Map for Planning, Rivers and Sea): box in Flood Zone 3 ' + f(res.fz3) + ' [derived]; in Flood Zone 2 ' + f(res.fz2) + ' [derived]. '
+      + 'Per layer (the layers can overlap; do not add). Caveat: ' + FZ.caveat + '; rivers and sea only, not surface water or groundwater.'
+      + (res.exceeded ? ' WARNING: service transfer limit hit; shares incomplete.' : '');
+  }
+  var core = { SRC: SRC, TILE: TILE, SNAP: SNAP, tileBox: tileBox, centredBox: centredBox, edgeMargin: edgeMargin, clipRing: clipRing, signedArea: signedArea, assessBox: assessBox, centroid: centroid, haversine: haversine, nearest: nearest, netOperator: netOperator, gridText: gridText, grade3Text: grade3Text, GA_SRC: GA_SRC, GRID_WARN: GRID_WARN, kvList: kvList, queryUrl: queryUrl, FZ: FZ, EA_GAP_MS: EA_GAP_MS, floodQueryUrl: floodQueryUrl, parseFlood: parseFlood, floodShares: floodShares, floodText: floodText };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
   root.FARM_ASSESS = core;
 
   // ---------------- browser ----------------
-  var cache = {}, lastReq = 0, subs = null, markers = [], busy = false;
+  var cache = {}, fzCache = {}, lastEa = 0, lastReq = 0, subs = null, markers = [], busy = false;
   function PF() { return root.__pf && root.__pf.PF; }
   function wait(fn) { if (root.SIM && PF()) fn(); else setTimeout(function () { wait(fn); }, 300); }
   function loadSubs() { if (subs) return subs;
@@ -131,13 +181,24 @@
         cache[b.key] = rec; return rec; });
     });
   }
+  // One EA request per assess, cached by the box key, at least 40 s after the previous EA request.
+  function fetchFlood(b, say) {
+    if (fzCache[b.key]) return Promise.resolve(fzCache[b.key]);
+    var gap = lastEa ? Math.max(0, lastEa + EA_GAP_MS - Date.now()) : 0;
+    if (gap > 0 && say) say(Math.ceil(gap / 1000));
+    return new Promise(function (ok) { setTimeout(ok, gap); }).then(function () {
+      lastEa = Date.now(); var t0 = performance.now();
+      return fetch(floodQueryUrl(b)).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function (j) {
+        var fl = parseFlood(j); fl.ms = Math.round(performance.now() - t0); fl.at = new Date().toISOString(); fzCache[b.key] = fl; return fl; });
+    });
+  }
   function clearDraw() { SIM.removeWhere(function (x) { return x.farmAssess; }); markers.forEach(function (m) { m.remove(); }); markers = []; }
-  function label(lon, lat, html) {
+  function label(lon, lat, html, border) {
     var el = document.createElement('div');
-    el.style.cssText = 'font:11px sans-serif;color:#dfe;background:rgba(0,20,30,.78);border:1px solid #6cf;padding:3px 6px;border-radius:4px;max-width:210px;pointer-events:none;white-space:normal';
+    el.style.cssText = 'font:11px sans-serif;color:#dfe;background:rgba(0,20,30,.78);border:1px solid ' + (border || '#6cf') + ';padding:3px 6px;border-radius:4px;max-width:210px;pointer-events:none;white-space:normal';
     el.innerHTML = html; markers.push(new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(SIM.map));
   }
-  function draw(b, res, ctr) {
+  function draw(b, res, ctr, fz) {
     var P = PF(), c = P.fromBng((b.e0 + b.e1) / 2, (b.n0 + b.n1) / 2), an = P.placeKey(c.lat, c.lon);
     // Drape on the map's terrain: each vertex carries its ground height relative to the anchor (the render adds the
     // anchor's own height), so outlines are not hidden by hills. Terrain is the open AWS model: an estimate.
@@ -161,22 +222,35 @@
       var g = P.fromBng(be, bn);
       label(g.lon, g.lat, '<b>ALC ' + f.grade + '</b> · ' + (f.area / 1e4).toFixed(0) + ' ha in box<br>Natural England provisional ALC · OGL v3.0 · 1:250k, data 2024-11-26');
     });
+    if (fz) ['fz3', 'fz2'].forEach(function (k) {   // flood zone outlines: low wire (0.6 m FZ3, 0.3 m FZ2), no posts
+      var h = k === 'fz3' ? 0.6 : 0.3, big = null;
+      fz.clipped[k].forEach(function (f) { f.rings.forEach(function (r) { var ll = r.map(function (p) { return loc(p[0], p[1]); });
+        for (var q = 0; q < ll.length; q++) { var p1 = ll[q], p2 = ll[(q + 1) % ll.length]; L.push([p1[0], p1[1], p1[2] + h, p2[0], p2[1], p2[2] + h]); } });
+        if (!big || f.area > big.area) big = f; });
+      if (big) { var r0 = big.rings[0]; big.rings.forEach(function (r) { if (Math.abs(signedArea(r)) > Math.abs(signedArea(r0))) r0 = r; });
+        var v = r0[Math.floor(r0.length * (k === 'fz3' ? 0.25 : 0.6))], gg = P.fromBng(v[0], v[1]);   // on the outline (zones are long and thin)
+        label(gg.lon, gg.lat, '<b>' + (k === 'fz3' ? 'Flood Zone 3' : 'Flood Zone 2') + '</b> · ' + fz[k].ha.toFixed(0) + ' ha in box<br>EA Flood Map for Planning · OGL v3.0 · zones Nov 2023, edited ' + (k === 'fz3' ? '2024-05-09' : '2025-01-01'), '#39f'); }
+    });
     SIM.addBlock({ lon: an.lon, lat: an.lat, anchor: an, lines: L, buf: P.wireBuffer(an, L), farmAssess: true });
   }
-  function report(b, rec, res, sub, c) {
+  function report(b, rec, res, sub, c, fz, fzErr) {
     var pct = function (x) { return (100 * x).toFixed(1) + '%'; };
     var lines = ['LAND: site box ' + (b.e0 / 1000) + ',' + (b.n0 / 1000) + ' km (2,048 m, centred on arrival, edges on 256 m BNG grid, ' + res.boxHa.toFixed(0) + ' ha). Agricultural Land Classification (provisional, 1:250k):'];
     res.rows.forEach(function (r) { lines.push('  ' + r.grade + ': ' + pct(r.share) + ' (' + r.ha.toFixed(0) + ' ha) [derived]'); });
     lines.push(grade3Text(res, false) + (res.grade3Share > 0 ? '' : ' Not a field survey.'));
     if (rec.exceeded) lines.push('  WARNING: service transfer limit hit; shares are incomplete.');
+    lines.push(floodText(fz, false, fzErr));
     lines.push(gridText(sub, false));
+    if (fz) lines.push('Flood source: ' + FZ.by + ', ' + FZ.name + ' (' + FZ.date + '). ' + FZ.licence + '. ' + FZ.attribution + ' One query, ' + fz.ms + ' ms, ' + fz.at.slice(0, 19) + 'Z.');
     lines.push('Source: ' + SRC.by + ', ' + SRC.name + '. ' + SRC.licence + '. ' + SRC.attribution + ' One query, ' + rec.ms + ' ms, ' + rec.at.slice(0, 19) + 'Z.');
     var cb = PF().toBng(c[1], c[0]);
-    root.__farmAssess = { box: b, centreBng: { e: cb.e, n: cb.n }, edgeMarginM: edgeMargin(b, cb.e, cb.n), rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at };
+    root.__farmAssess = { box: b, centreBng: { e: cb.e, n: cb.n }, edgeMarginM: edgeMargin(b, cb.e, cb.n), rows: res.rows, bmv12Share: res.bmv12Share, grade3Share: res.grade3Share, polygons: res.clipped.length, nearestSubKm: sub ? sub.m / 1000 : null, nearestSubKv: sub ? sub.kv : null, nearestSubOp: sub ? sub.op || null : null, gridLine: gridText(sub, innerWidth < 600), centre: c, exceeded: rec.exceeded, fetchedAt: rec.at,
+      flood: fz ? { fz3: { ha: fz.fz3.ha, share: fz.fz3.share }, fz2: { ha: fz.fz2.ha, share: fz.fz2.share }, exceeded: fz.exceeded, fetchedAt: fz.at, ms: fz.ms } : null,
+      floodError: fz ? null : (fzErr || 'no answer'), floodLine: floodText(fz, innerWidth < 600, fzErr) };
     if (innerWidth < 600) lines = [lines[0].replace(' (2,048 m, centred on arrival, edges on 256 m BNG grid, ', ' (centred on arrival, ').replace('Agricultural Land Classification (provisional, 1:250k):', 'ALC provisional 1:250k:')]
       .concat(res.rows.map(function (r) { return '  ' + r.grade.replace(/ \(outside.*\)/, '') + ' ' + pct(r.share); }),
-        [grade3Text(res, true), gridText(sub, true),
-         'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.']);
+        [grade3Text(res, true), floodText(fz, true, fzErr), gridText(sub, true),
+         'Natural England ALC, OGL v3.0. © Natural England; © Crown copyright 2026.' + (fz ? ' EA flood zones, OGL v3.0, © EA 2024.' : '')]);
     SIM.info(lines.join('\n')); var el = document.getElementById('info'); if (el) el.style.whiteSpace = 'pre-wrap';
   }
   function assess() {
@@ -185,9 +259,11 @@
     var c = SIM.map.getCenter(), t = PF().toBng(c.lat, c.lng), b = centredBox(t.e, t.n);
     if (!(t.e > 0 && t.e < 700000 && t.n > 0 && t.n < 1300000)) { SIM.info('Assess: outside Great Britain; no National Grid box.'); busy = false; return; }
     SIM.info('Assessing land in site box ' + b.key + ' (one request to Natural England)...');
-    Promise.all([fetchAlc(b), loadSubs().catch(function () { return []; })]).then(function (x) {
-      var rec = x[0], res = assessBox(rec.feats, b), sub = nearest(x[1], c.lat, c.lng);
-      clearDraw(); draw(b, res, [c.lng, c.lat]); report(b, rec, res, sub, [c.lng, c.lat]);
+    var fzErr = null, fzP = fetchFlood(b, function (s) { SIM.info('Assessing land in site box ' + b.key + '; waiting ' + s + ' s before asking the Environment Agency (at least 40 s between requests)...'); })
+      .then(function (fl) { var r = floodShares(fl, b); r.ms = fl.ms; r.at = fl.at; return r; }, function (e) { fzErr = e.message; return null; });
+    Promise.all([fetchAlc(b), loadSubs().catch(function () { return []; }), fzP]).then(function (x) {
+      var rec = x[0], res = assessBox(rec.feats, b), sub = nearest(x[1], c.lat, c.lng), fz = x[2];
+      clearDraw(); draw(b, res, [c.lng, c.lat], fz); report(b, rec, res, sub, [c.lng, c.lat], fz, fzErr);
     }).catch(function (e) { SIM.info('Assess land: Natural England service did not answer (' + e.message + '). Nothing drawn; no value guessed.'); })
       .then(function () { busy = false; });
   }

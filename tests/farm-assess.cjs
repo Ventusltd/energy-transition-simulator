@@ -90,4 +90,29 @@ T('(c) centred box area stays 419.43 ha; one envelope query for it', () => {
   const cb = A.centredBox(412345, 290001), rr = A.assessBox([], cb);
   return [near(rr.boxHa, 419.4304, 1e-6) && cb.e1 - cb.e0 === 2048 && cb.n1 - cb.n0 === 2048 && /geometry=411392%2C289024%2C413440%2C291072/.test(A.queryUrl(cb)), `${rr.boxHa} ha, ${JSON.stringify(cb)}`]; });
 
+// 9. Round 4: EA Flood Map for Planning, Flood Zones 3 and 2, clipped to the same centred box (made-up geometry).
+T('(fz) one service-level envelope query for both zone layers, EPSG:27700, the centred box', () => {
+  const cb = A.centredBox(412345, 290001), u = A.floodQueryUrl(cb);
+  return [/Flood_Map_for_Planning\/FeatureServer\/query\?/.test(u) && u.includes(encodeURIComponent('{"1":"1=1","2":"1=1"}')) && /geometry=411392%2C289024%2C413440%2C291072/.test(u) && /inSR=27700/.test(u) && /esriGeometryEnvelope/.test(u), u.slice(0, 140)]; });
+T('(fz) licence OGL v3.0, EA attribution, data date, 40 s EA pace', () => [A.FZ.licence === 'Open Government Licence v3.0' && /Environment Agency copyright/.test(A.FZ.attribution) && /Nov 2023/.test(A.FZ.date) && A.EA_GAP_MS >= 40000, A.FZ.date]);
+T('(fz) clip and area: FZ3 strip 512 m wide overhanging the box, FZ2 = west half with a 100x100 hole', () => {
+  const cb = A.centredBox(412345, 290001), x0 = cb.e0, y0 = cb.n0;
+  const ans = { layers: [
+    { id: 1, features: [{ geometry: { rings: [sq(x0 - 300, y0 - 300, x0 + 512, y0 + 2048 + 300)] } }] },
+    { id: 2, features: [{ geometry: { rings: [sq(x0 - 300, y0 - 300, x0 + 1024, y0 + 2048 + 300), sq(x0 + 700, y0 + 700, x0 + 800, y0 + 800, false)] } },
+                        { geometry: { rings: [sq(x0 + 9000, y0, x0 + 9500, y0 + 500)] } }] } ] };
+  const r = A.floodShares(A.parseFlood(ans), cb), t = A.floodText(r, false), tp = A.floodText(r, true);
+  const ok3 = near(r.fz3.share, 0.25, 1e-12) && near(r.fz3.ha, 104.8576, 1e-6);
+  const ok2 = near(r.fz2.share, (1024 * 2048 - 10000) / (2048 * 2048), 1e-12) && near(r.fz2.ha, (1024 * 2048 - 10000) / 1e4, 1e-6);
+  const txt = t.includes('Flood Zone 3 25.0% (105 ha) [derived]') && t.includes('Flood Zone 2 49.8% (209 ha) [derived]') && t.includes('planning flood zones, not a site flood risk assessment') && /do not add/.test(t);
+  const inside = r.clipped.fz3.concat(r.clipped.fz2).every(f => f.rings.every(g => g.every(p => p[0] >= cb.e0 - 1e-6 && p[0] <= cb.e1 + 1e-6 && p[1] >= cb.n0 - 1e-6 && p[1] <= cb.n1 + 1e-6)));
+  return [ok3 && ok2 && txt && inside && r.clipped.fz2.length === 1 && /\[derived\]/.test(tp) && /not a site flood risk assessment/.test(tp), `fz3 ${r.fz3.share} ${r.fz3.ha} ha; fz2 ${r.fz2.share.toFixed(6)}; ${t.slice(0, 110)}`]; });
+T('(fz) negative: an empty answer gives 0% in both zones, with the caveat', () => {
+  const cb = A.centredBox(412345, 290001), r = A.floodShares(A.parseFlood({ layers: [{ id: 1, features: [] }, { id: 2, features: [] }] }), cb), t = A.floodText(r, false);
+  return [r.fz3.share === 0 && r.fz2.share === 0 && t.includes('Flood Zone 3 0.0% (0 ha) [derived]') && t.includes('Flood Zone 2 0.0% (0 ha) [derived]') && t.includes('planning flood zones, not a site flood risk assessment'), t.slice(0, 160)]; });
+T('(fz) no answer (service error) -> says so, shows no value', () => {
+  let threw = false; try { A.parseFlood({ error: { message: 'Service unavailable' } }); } catch (x) { threw = true; }
+  const t = A.floodText(null, false, 'HTTP 503'), tp = A.floodText(null, true);
+  return [threw && /did not answer/.test(t) && /no value shown/.test(t) && !/%/.test(t + tp) && /no value shown/.test(tp), t]; });
+
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
