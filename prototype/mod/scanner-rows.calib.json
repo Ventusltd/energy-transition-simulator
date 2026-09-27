@@ -1,0 +1,19 @@
+{
+  "what": "Solar row calibration for procedural fill, read from satellite imagery by the Wire Frame Scanner row-field fit (2D FFT per 72 m window plus a brute-force azimuth, pitch and phase sweep, on CuPy with a NumPy witness on 16 central windows).",
+  "tag": "derived from imagery (estimated), not measured",
+  "imagery": "Esri World Imagery, zoom 17 (about 0.7 m per pixel); capture dates per sample not checked",
+  "samples_total": 6,
+  "samples_solar": 4,
+  "samples_accepted": 1,
+  "rejected": [
+    { "count": 2, "reason": "not solar (storage and forecourt samples): no rows to read" },
+    { "count": 2, "reason": "panel mask missed the panels (dark arrays under the luminance threshold, or a site in build); the windows it kept were roads and buildings, looked at" },
+    { "count": 1, "reason": "pitch 5.0 m with a tight spread: below any plausible table pitch at this zoom, not confirmed on a closer picture, so held back" }
+  ],
+  "row_pitch_m": { "N": 1, "median": 26.05, "iqr": [24.59, 26.98], "windows": 449, "tag": "derived from imagery (estimated)" },
+  "row_axis": { "N": 1, "value": "north-south (bearing median 177.5 deg); tables face east and west", "tag": "derived from imagery (estimated)" },
+  "panel_cover_fraction": { "N": 1, "median": 0.88, "meaning": "share of each 72 m window the dark-panel mask covers, over windows with cover of at least 0.4 (not ground cover ratio)", "tag": "derived from imagery (estimated)" },
+  "half_pitch_share": { "N": 1, "value": 0.072, "meaning": "share of panel windows whose pitch reads 12 to 16 m (each face read as a row); small, so the median is the full tent pitch", "tag": "derived from imagery (estimated)" },
+  "witness": { "engine": "cupy", "numpy_pairs": 15, "max_pitch_diff_m": 1.19, "max_bearing_diff_deg": 3.0, "verdict": "consistent within one sweep step, not identical" },
+  "limits": "N = 1 is one farm, not a calibration. Procedural must say 'calibrated on 1 imagery sample' until more samples pass. Per-sample values stay private."
+}

@@ -64,6 +64,15 @@ for (const f of farms) {
   check(`${f.register}: LiDAR-claimed rows ${pre ? 'refused' : 'allowed'} by R5-9`, b.source === 'lidar' && b.allowed === !pre, `${b.source}, allowed ${b.allowed}: ${b.reason}`);
 }
 
+// 5. Calibration fixture: aggregates only, every value tagged, N honest, no names or places.
+const calRaw = fs.readFileSync(path.join(MOD, 'scanner-rows.calib.json'), 'utf8'), cal = JSON.parse(calRaw);
+check('calib: N accepted <= solar <= total, and the pitch N equals accepted', cal.samples_accepted <= cal.samples_solar && cal.samples_solar <= cal.samples_total && cal.row_pitch_m.N === cal.samples_accepted, JSON.stringify([cal.samples_accepted, cal.samples_solar, cal.samples_total, cal.row_pitch_m.N]));
+check('calib: rejections account for every sample not accepted', cal.rejected.reduce((a, r) => a + r.count, 0) === cal.samples_total - cal.samples_accepted, cal.rejected.map(r => r.count).join('+'));
+check('calib: every value tagged estimated (imagery), none claims measured', ['row_pitch_m', 'row_axis', 'panel_cover_fraction', 'half_pitch_share'].every(k => /estimated/.test(cal[k].tag)) && !/"tag": "measured/.test(calRaw), 'tags');
+check('calib: no coordinates, register ids or sample keys in the public fixture', !/\d{1,2}\.\d{4,}|REPD|s[1-6]-|lat|lon/i.test(calRaw), 'clean');
+check('calib: pitch median inside its own IQR, and a plausible table pitch (6 to 40 m)', cal.row_pitch_m.iqr[0] <= cal.row_pitch_m.median && cal.row_pitch_m.median <= cal.row_pitch_m.iqr[1] && cal.row_pitch_m.median > 6 && cal.row_pitch_m.median < 40, cal.row_pitch_m.median);
+check('calib: the on-screen sentence carries N and the tag', /1 of 4 solar samples/.test(M.calibText(cal)) && /estimated/.test(M.calibText(cal)) && M.calibText(null) === 'No row calibration.', M.calibText(cal));
+
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}  -- ${r.ev}`);
 const failed = results.filter(r => !r.ok).length; console.log(`\n${results.length - failed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
