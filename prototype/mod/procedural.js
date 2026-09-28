@@ -9,6 +9,13 @@
 // Arrival and view only: the register index is the overlay's own local file; nothing is fetched on movement.
 (function () {
   'use strict';
+  // kV line file status (round r5), recorded HERE without touching pylons-real: its catch leaves lines[kv] = [] when a
+  // fetch fails, which looks like a loaded empty file. So procedural watches the page's own resource timings for the
+  // grid_<kv>kv.geojson requests (nothing fetched here) and treats a kV as UNKNOWN when its file answered non-2xx, or
+  // produced no lines at all (a national kV file with no lines is not a credible load).
+  const kvHttp = {};                                            // kv -> HTTP status of its line file (0 = network failure or hidden)
+  try { new PerformanceObserver(l => { for (const e of l.getEntries()) { const m = /grid_(\d+)kv\.geojson/.exec(e.name); if (m) kvHttp[m[1]] = e.responseStatus || 0; } })
+    .observe({ type: 'resource', buffered: true }); } catch (e) { /* no observer: fall back on the empty-file rule alone */ }
   const here = document.currentScript && document.currentScript.src ? document.currentScript.src : location.href;
   const E = n => new URL('engine/' + n, here).href;
   // Calibration state, said as it is: the six measured samples hold ground heights only (no row pitch, no fenced area), so
@@ -92,16 +99,24 @@
     // reach (sqrt2*h + reachM + 50 m of the register point) count. Nothing fetched here. null = no line data loaded yet.
     function ohlNear(r, R) {                                    // real line spans within reach of the site box, in its local metres
       const P = window.__pylonsReal; if (!P || !P.lines || !P.towersOf || !P.KV) return null;
-      const kvs = Object.keys(P.KV); if (!kvs.every(kv => Array.isArray(P.lines[kv]))) return null;
+      const kvs = Object.keys(P.KV); if (!kvs.every(kv => Array.isArray(P.lines[kv]))) return null;   // still loading
+      const bad = kv => !P.lines[kv].length || (kv in kvHttp && kvHttp[kv] !== 0 && (kvHttp[kv] < 200 || kvHttp[kv] > 299));
+      const missing = kvs.filter(bad);                          // failed or missing kV files: unknown, never "no line
       const a = PF.placeKey(r.lat, r.lon), off = PF.toLocal(a, r.lat, r.lon, 0), out = [], k = Math.cos(r.lat * Math.PI / 180);
-      for (const kv of kvs) { const reachM = Math.max(...P.KV[kv].arm) + GS6_M, lim = Math.SQRT2 * R + reachM + 50, dLa = (lim + 200) / 111320, dLo = dLa / k;
+      for (const kv of kvs) { if (missing.includes(kv)) continue; const reachM = Math.max(...P.KV[kv].arm) + GS6_M, lim = Math.SQRT2 * R + reachM + 50, dLa = (lim + 200) / 111320, dLo = dLa / k;
         P.lines[kv].forEach((ln, li) => { const [w, s, e, n] = ln.bbox;
           if (e < r.lon - dLo || w > r.lon + dLo || n < r.lat - dLa || s > r.lat + dLa) return;   // bbox far from the site: skip
           const pts = P.towersOf(kv, li).map(t => { const q = PF.toLocal(a, t.lat, t.lon, 0); return [q.x - off.x, q.y - off.y]; });
           for (let i = 1; i < pts.length; i++) if (segD(0, 0, ...pts[i - 1], ...pts[i]) < lim) out.push({ pts: [pts[i - 1], pts[i]], closed: false, reachM, kv }); }); }
-      return out;                                               // one zone per span near the site, so far-away spans cost nothing
+      out.missing = missing; out.kvs = kvs;                     // one zone per span near the site, so far-away spans cost nothing
+      return out;
     }
+    const kvList = a => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+    const ohlOk = o => o !== null && !o.missing.length;           // every kV line file loaded: the only case a "no line" is a negative
     const ohlSay = (ohl, what) => ohl === null ? 'no overhead line data loaded for this site box: clearance not applied'
+      : ohl.missing.length === ohl.kvs.length ? `overhead line data for ${kvList(ohl.missing)} kV not loaded: clearance not applied`
+      : ohl.missing.length ? `overhead line data for ${kvList(ohl.missing)} kV not loaded: clearance partial (`
+        + (ohl.length ? what : `no mapped ${kvList(ohl.kvs.filter(k => !ohl.missing.includes(k)))} kV line within reach`) + ')'
       : ohl.length ? what : 'no mapped overhead line within reach of this site box: nothing kept out';
     const crosses = (c, a, b) => { const ccw = (p, q, r) => (r[1] - p[1]) * (q[0] - p[0]) > (q[1] - p[1]) * (r[0] - p[0]);
       return c.some((p, i) => { const q = c[(i + 1) % 4]; return ccw(p, a, b) !== ccw(q, a, b) && ccw(p, q, a) !== ccw(p, q, b); }); };
@@ -164,7 +179,7 @@
       for (const s of res.stations) { const [e, n] = Fr.en(s.u, s.v); box(out, e - 6, n - 1.5, 12, 3, 0, 3); }
       const kept = (res.skipped && res.skipped.ohl) || 0, areaHa = side * side / 1e4, mwPerHa = r.mw / areaHa;
       const rowsV = [...new Set(Array.from({ length: t.length / 6 }, (_, i) => Math.round(t[6 * i + 1] * 1000) / 1000))].sort((a, b) => a - b);
-      return { lines: out, geom: { ohl, ohlLoaded: ohlR !== null, ohlRadiusM: h, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
+      return { lines: out, geom: { ohl, ohlLoaded: ohlOk(ohlR), ohlMissing: ohlR ? ohlR.missing : null, ohlRadiusM: h, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
           formula: { pitchM: T.pitch, pitchTag: fit && pitchUsed ? 'row file reading, estimated from imagery' : CALIB.pitchTag, rowAzDeg: rowAz, layout: st.layout, fitN: fit ? fit.n : 0, fitBoxHalfM: fr.boxHalfM, fitAzDeg: fit ? fit.azDeg : null, rowTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
             boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], rowsV } },
         text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, ${rowTag}, `
@@ -184,7 +199,7 @@
         const c = [[x, y], [x + BESS.w, y], [x + BESS.w, y + BESS.d], [x, y + BESS.d]];
         if (near(c)) { dropped++; continue; } cont.push(c); box(out, x, y, BESS.w, BESS.d, 0, BESS.h); }
       box(out, -W / 2 - BESS.fence, -D / 2 - BESS.fence, W + 2 * BESS.fence, D + 2 * BESS.fence, 0, 2.4);
-      return { lines: out, geom: { ohl, ohlLoaded: ohlR !== null, ohlRadiusM: Math.max(W, D) / 2 + BESS.fence, marginM: margin, tables: [], containers: cont, skipped: dropped },
+      return { lines: out, geom: { ohl, ohlLoaded: ohlOk(ohlR), ohlMissing: ohlR ? ohlR.missing : null, ohlRadiusM: Math.max(W, D) / 2 + BESS.fence, marginM: margin, tables: [], containers: cont, skipped: dropped },
         text: `${r.mw} MW storage: ${n - dropped} of ${n} containers (assumed 2 h, 3.7 MWh each); `
           + ohlSay(ohlR, `${dropped} container positions kept out of overhead line zones (illustrative)`) + `; ${SQUARE}` };
     }
@@ -221,7 +236,7 @@
     map.on('moveend', refresh);
     window.__proceduralRefresh = refresh; window.__proceduralFit = ref => { const r = rows.find(x => x.ref === ref); return r ? fitRows(r) : null; }; window.__proceduralGhost = () => ghost.length;
     window.__proceduralOhl = ref => { const r = rows.find(x => x.ref === ref), c = cache.get(ref); if (!r || !c) return null;   // fresh, not the cache
-      const o = ohlNear(r, c.geom.ohlRadiusM); return { loaded: o !== null, spans: o ? o.length : 0, key: o ? o.map(z => z.kv + ':' + z.pts.flat().map(v => v.toFixed(2)).join(',')).join('|') : '' }; };
+      const o = ohlNear(r, c.geom.ohlRadiusM); return { loaded: ohlOk(o), missing: o ? o.missing : null, http: { ...kvHttp }, spans: o ? o.length : 0, key: o ? o.map(z => z.kv + ':' + z.pts.flat().map(v => v.toFixed(2)).join(',')).join('|') : '' }; };
   }
 
   (function wait() { if (window.SIM && window.__pf && window.__pf.PF) start(window.SIM, window.__pf.PF); else setTimeout(wait, 100); })();

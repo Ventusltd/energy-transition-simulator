@@ -28,6 +28,25 @@ async function browser() {
   const shot = n => p.screenshot({ path: path.join(OUT, n + '.png') });
   const state = () => p.evaluate(() => window.__procedural || null);
   const waitDrawn = async ms => { const t = Date.now(); let s; while (Date.now() - t < ms) { s = await state(); if (s && s.shown.length) return s; await p.waitForTimeout(500); } return s; };
+  // 0. Round r5: a kV line file that fails to load is UNKNOWN, never "no mapped overhead line within reach". One page with the
+  // 400 kV file answered 404; 6502 and 5394 must say not loaded / partial, and __proceduralOhl must report loaded:false.
+  { const q = await b.newPage({ viewport: { width: 1280, height: 800 } }); let hit = 0;
+    await q.route('**/grid_400kv.geojson', r => { hit++; return r.fulfill({ status: 404, body: 'not found' }); });
+    await q.goto(`${base}?lat=51.33877&lon=0.91388&zoom=15`, { waitUntil: 'load' }); await q.waitForTimeout(8000);
+    const rd = await q.evaluate(() => ({ SIM: !!window.SIM, canvas: !!document.querySelector('canvas.maplibregl-canvas') }));
+    check('404 run: window.SIM and the map canvas present before any shot', rd.SIM && rd.canvas, JSON.stringify(rd));
+    await q.$eval('#procedural', x => x.click());
+    let f = null; for (let t = 0; t < 60 && !(f && f.a && f.b && f.a.ohlMissing); t++) { await q.waitForTimeout(1000);
+      f = await q.evaluate(() => { const S = window.__procedural; if (!S) return null; const g = ref => { const x = S.shown.find(z => z.ref === ref); return x && { ohlMissing: x.geom.ohlMissing, loaded: x.geom.ohlLoaded, clr: x.text.split('; ').find(z => /overhead line/.test(z)) }; };
+        return { a: g(6502), b: g(5394), oa: window.__proceduralOhl(6502), ob: window.__proceduralOhl(5394) }; }); }
+    console.log('KV404', hit, JSON.stringify(f && { a: f.a, b: f.b, oa: f.oa && { loaded: f.oa.loaded, missing: f.oa.missing, http: f.oa.http, spans: f.oa.spans }, ob: f.ob && { loaded: f.ob.loaded, missing: f.ob.missing } }));
+    const say = /overhead line data for 400 kV not loaded: clearance (not applied|partial)/;
+    check('404 on the 400 kV line file: 6502 and 5394 say not loaded or partial, never "nothing kept out"', hit > 0 && f && f.a && f.b && say.test(f.a.clr) && say.test(f.b.clr) && !/nothing kept out/.test(f.a.clr + f.b.clr) && !f.a.loaded && !f.b.loaded,
+      JSON.stringify(f && { hit, a: f.a, b: f.b }));
+    check('404: __proceduralOhl reports loaded:false with 400 kV missing, for 6502 and 5394', f && f.oa && f.ob && f.oa.loaded === false && f.ob.loaded === false && f.oa.missing.includes('400') && f.ob.missing.includes('400'),
+      JSON.stringify(f && f.oa && { a: { loaded: f.oa.loaded, missing: f.oa.missing, http: f.oa.http }, b: f.ob && { loaded: f.ob.loaded, missing: f.ob.missing } }));
+    await q.evaluate(() => { window.SIM.removeWhere(b => b.scannerRows); window.SIM.map.jumpTo({ center: [0.91388, 51.33877], zoom: 15, pitch: 0, bearing: 0 }); }); await q.waitForTimeout(4000);
+    await q.screenshot({ path: path.join(OUT, '0-kv404-solar-top.png') }); await q.close(); }
   // 1. A register solar farm (REPD 6502, 373 MW at its published point).
   await p.goto(`${base}?lat=51.33877&lon=0.91388&zoom=15`, { waitUntil: 'load' }); await p.waitForTimeout(8000);
   const ready = await p.evaluate(() => ({ SIM: !!window.SIM, canvas: !!document.querySelector('canvas.maplibregl-canvas'), gl: (() => { const g = document.querySelector('canvas.maplibregl-canvas').getContext('webgl2') || document.querySelector('canvas.maplibregl-canvas').getContext('webgl'); const e = g && g.getExtension('WEBGL_debug_renderer_info'); return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : 'n/a'; })() }));
@@ -133,7 +152,7 @@ async function browser() {
   check('battery yard sized from capacity (217 containers less any kept out of line zones, assumed rule)', bess && bess.segments === 12 * (218 - bess.geom.skipped), JSON.stringify(bess && { segments: bess.segments, skipped: bess.geom.skipped, text: bess.text }));
   await p.$eval('#wire', x => x.click()); await p.waitForTimeout(2500); await shot('5-bess-wire');
   const cb = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 16769); return f && { spans: f.geom.ohl.length, skipped: f.geom.skipped, text: f.text }; });
-  check('storage: clearance stated', cb && (cb.spans ? /container positions kept out/.test(cb.text) : /no mapped overhead line within reach of this site box: nothing kept out|no overhead line data loaded for this site box: clearance not applied/.test(cb.text)), JSON.stringify(cb));
+  check('storage: clearance stated', cb && (cb.spans ? /container positions kept out/.test(cb.text) : /no mapped overhead line within reach of this site box: nothing kept out|no overhead line data loaded for this site box: clearance not applied|overhead line data for [\d ,and]+ kV not loaded/.test(cb.text)), JSON.stringify(cb));
   await p.$eval('#walk', x => x.click()); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('6a-bess-walk');
   await p.$eval('#drone', x => x.click()); await p.waitForTimeout(3000); await shot('6-bess-fly');
   // 3. A register solar site with no measured rows loaded (REPD 1335, 49.6 MW): the south formula, said so.
