@@ -18,16 +18,32 @@
   function dayUsed() { try { const d = JSON.parse(localStorage.getItem(DAY_KEY) || '{}'); return d.date === today() ? d.used | 0 : 0; } catch (e) { return 0; } }
   function saveDay() { try { localStorage.setItem(DAY_KEY, JSON.stringify({ date: today(), used: pacer.state.used })); } catch (e) { /* private window */ } }
 
+  // The receipt collapses to ONE dim line (tile + receipt sha8); a click on it opens the full receipt, licence and
+  // attribution above it, a second click closes it. The line is placed clear of every visible caption (place()).
+  let line = null, full = null, open = false;
   function panel() {
-    if (box) return box;
+    if (box) return full;
     box = document.createElement('div'); box.id = 'lidar-stream-receipt';
-    box.style.cssText = 'position:absolute;left:8px;bottom:8px;z-index:3;max-width:min(560px,calc(100vw - 32px));font:11px/1.35 monospace;color:#dfe;background:rgba(0,0,0,.72);padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-all';
-    document.body.appendChild(box); return box;
+    box.style.cssText = 'position:fixed;left:10px;bottom:8px;z-index:5;display:flex;flex-direction:column-reverse;align-items:flex-start;gap:4px;max-width:calc(100vw - 120px)';
+    line = document.createElement('div'); line.id = 'lidar-stream-line'; line.title = 'Measured ground: click for the full receipt, licence and attribution';
+    line.style.cssText = 'font:11px/15px system-ui,sans-serif;color:var(--dim,#8a9a9a);text-shadow:0 0 3px #000,0 0 1px #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;cursor:pointer';
+    full = document.createElement('div'); full.id = 'lidar-stream-full'; full.hidden = true;
+    full.style.cssText = 'max-width:min(560px,calc(100vw - 32px));max-height:50vh;overflow:auto;font:11px/1.35 monospace;color:#dfe;background:rgba(0,0,0,.8);padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-all';
+    line.addEventListener('click', () => setOpen(!open));
+    box.append(line, full); document.body.appendChild(box); return full;
+  }
+  function setOpen(v) { panel(); open = !!v; full.hidden = !open; place(); }
+  function summary(t) {
+    if (!t) return 'measured ground: arrive somewhere to stream its tile';
+    const at = `tile ${t.tile.e0}/${t.tile.n0}`, d = t.dtm;
+    if (d && d.sha) return `measured ground: EA LiDAR 1 m, ${at}, receipt ${d.sha.slice(0, 8)}${t.dsm && t.dsm.sha ? '' : t.status && t.status !== 'complete' ? ` (${t.status})` : ''}`;
+    return `measured ground: ${at}, ${t.status || (d && d.none) || 'waiting'}`;
   }
   function show() { showText(); place(); }
   function showText() {
     const t = current && tiles.get(current), P = PF();
-    if (!t) { panel().textContent = 'Measured ground (R5): arrive somewhere to stream its 2,048 m tile.'; return; }
+    panel(); line.textContent = summary(t);
+    if (!t) { full.textContent = 'Measured ground (R5): arrive somewhere to stream its 2,048 m tile.'; return; }
     const eng = P && P.engine ? P.engine : (t.engine || '');
     const L = t.arrived ? [t.arrived] : [];
     L.push(`Measured ground, tile ${t.tile.e0} E ${t.tile.n0} N (2,048 m, EPSG:27700): ${t.status}`);
@@ -63,6 +79,7 @@
   // must stay exactly what perf.js adds (the per-node cancellation H - gz + gz = H needs the same number on both sides).
   // demAt is the map DEM in true metres (ODN), divided by the exaggeration like coords-readout.js, for DEM vs DTM.
   const exag = () => { const m = window.SIM.map, t = m.getTerrain && m.getTerrain(); return (t && t.exaggeration) || 1; };
+  const elevNow = () => (window.SIM.map.transform && window.SIM.map.transform.elevation) || 0;
   function terrainAt(lon, lat) { const m = window.SIM.map; return (m.queryTerrainElevation && m.queryTerrainElevation([lon, lat])) || 0; }
   function demAt(lon, lat) {
     const m = window.SIM.map; if (!(m.getTerrain && m.getTerrain() && m.queryTerrainElevation)) return null;
@@ -90,7 +107,7 @@
       const gzNow = terrainAt(t.anchor.lon, t.anchor.lat), stride = Math.max(1, Math.floor(idx.length / n));
       for (let q = 0; q < idx.length && out.length < n; q += stride) {
         const k = idx[q], a = k % t.N, b = (k - a) / t.N, e = t.tile.e0 + a * STEP + STEP / 2 + 0.5, nn = t.tile.n0 + b * STEP + STEP / 2 + 0.5;
-        const g = P.fromBng(e, nn), mz = blk.buf[6 * t.seg[k] + 2] + P.toMercator(t.anchor.lat, t.anchor.lon, gzNow).z;
+        const g = P.fromBng(e, nn), mz = blk.buf[6 * t.seg[k] + 2] + P.toMercator(t.anchor.lat, t.anchor.lon, gzNow + elevNow()).z; // back to ODN
         const drawn = mz / P.toMercator(g.lat, g.lon, 1).z, truth = heightAt(e, nn);
         out.push({ e, n: nn, drawn, truth: truth.h, D: drawn - truth.h, demD: demAt(g.lon, g.lat) == null ? null : demAt(g.lon, g.lat) - truth.h, receipt: truth.receipt });
       }
@@ -108,10 +125,13 @@
     // HEIGHT DATUM: the overlay lifts every block by the map terrain at its anchor (gz). Each vertex is written as
     // (its own DTM height - gz), so on screen every node sits at its own measured height (ODN), never at one anchor
     // height per block. gz is re-read when the map goes idle and the block is rebuilt if it moved (terrain loading).
-    const gz = terrainAt(f.anchor.lon, f.anchor.lat);
+    // FRAME (r3): MapLibre 4.7 custom layers draw in a frame whose zero is the centre's elevation (transform.elevation,
+    // E), and gz is relative to E too. So a vertex is (H - gz - E): drawn = H - gz - E + gz = H - E, the node at its
+    // own measured height in the map's frame. Without E the wire floated E metres up once E was set (Walk: a band overhead).
+    const gz = terrainAt(f.anchor.lon, f.anchor.lat), E = elevNow(), base = gz + E;
     const H = new Float32Array(N * N), seg = new Int32Array(N * N).fill(-1);
     for (let b = 0; b < N; b++) for (let a = 0; a < N; a++) H[b * N + a] = hAt(t.dtm, a * STEP + STEP / 2, b * STEP + STEP / 2);
-    const X = (a, b) => { const c = STEP / 2, p = f.xy(t.tile.e0 + a * STEP + c + 0.5, t.tile.n0 + b * STEP + c + 0.5); return [p[0], p[1], H[b * N + a] - gz]; };
+    const X = (a, b) => { const c = STEP / 2, p = f.xy(t.tile.e0 + a * STEP + c + 0.5, t.tile.n0 + b * STEP + c + 0.5); return [p[0], p[1], H[b * N + a] - base]; };
     const L = [];
     for (let b = 0; b < N; b++) for (let a = 0; a < N; a++) {
       if (!Number.isFinite(H[b * N + a])) continue; const p = X(a, b), k0 = L.length;
@@ -119,9 +139,9 @@
       if (b + 1 < N && Number.isFinite(H[(b + 1) * N + a])) { const q = X(a, b + 1); L.push([p[0], p[1], p[2], q[0], q[1], q[2]]); }
       if (L.length > k0) seg[b * N + a] = k0;
     }
-    t.gz = gz; t.H = H; t.seg = seg; t.N = N; t.anchor = f.anchor;
+    t.gz = gz; t.E = E; t.H = H; t.seg = seg; t.N = N; t.anchor = f.anchor;
     t.blks.push({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: L, buf: P.wireBuffer(f.anchor, L), lidarStream: key,
-      prov: 'measured', receipt: t.dtm.sha, kind: 'ground', gz });
+      prov: 'measured', receipt: t.dtm.sha, kind: 'ground', gz, E });
     t.segs = L.length;
     if (t.dsm && !t.dsm.none && !t.dsm.pending) {
       const O = []; let n = 0;
@@ -133,14 +153,14 @@
         }
         if (!(top > ABOVE_M)) continue;
         n++;
-        const p = f.xy(t.tile.e0 + a * STEP + STEP / 2 + 0.5, t.tile.n0 + b * STEP + STEP / 2 + 0.5), z0 = gi - gz, z1 = z0 + top, d = 2;
+        const p = f.xy(t.tile.e0 + a * STEP + STEP / 2 + 0.5, t.tile.n0 + b * STEP + STEP / 2 + 0.5), z0 = gi - base, z1 = z0 + top, d = 2;
         O.push([p[0], p[1], z0, p[0], p[1], z1],
           [p[0] - d, p[1] - d, z1, p[0] + d, p[1] - d, z1], [p[0] + d, p[1] - d, z1, p[0] + d, p[1] + d, z1],
           [p[0] + d, p[1] + d, z1, p[0] - d, p[1] + d, z1], [p[0] - d, p[1] + d, z1, p[0] - d, p[1] - d, z1]);
       }
       t.objects = n;
       if (O.length) t.blks.push({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: O, buf: P.wireBuffer(f.anchor, O), lidarStream: key,
-        prov: 'derived', receipt: t.dsm.sha, kind: 'above-ground', gz });
+        prov: 'derived', receipt: t.dsm.sha, kind: 'above-ground', gz, E });
     }
     sync();
   }
@@ -148,22 +168,27 @@
   // LAYER ORDER. Wire and Dark: the blocks ride the overlay's solid wire layer, as before. Satellite: they move to this
   // module's own layer, drawn above the imagery in the same colour (still solid, continuous lines = measured) but at
   // alpha SAT_ALPHA with no depth write, so the satellite stays visible through the 8 m grid at close range.
-  const SAT_ALPHA = 0.35, sat = [];
+  // DEPTH_BIAS (r3): the map DEM is coarser than the 1 m DTM and sits up to ~2 m above measured nodes at the walker, so
+  // a plain depth test hid the near wire at grazing angles. The bias moves only the depth (NDC z, same for x and y, so
+  // every line stays exactly where it was measured on screen); in metres it grows with distance, and hills still hide.
+  // r5: 0.0006 let 60/3,993 nodes behind a synthetic 180 m ridge show at the crest (1.5 %); 0.0005 draws 2 (0.05 %),
+  // with 2,288/2,301 visible far nodes still drawn (tests/lidar-stream.cjs, ridge check).
+  const SAT_ALPHA = 0.35, sat = [], DEPTH_BIAS = 0.0005;
   const satMode = () => { const m = window.SIM.map; return !!(m.getSource && m.getSource('sat')); };
   const layer = { id: 'lidar-stream-sat', type: 'custom', renderingMode: '3d',
     onAdd(m, gl) { const sh = (ty, src) => { const o = gl.createShader(ty); gl.shaderSource(o, src); gl.compileShader(o); return o; };
       this.pr = gl.createProgram();
-      gl.attachShader(this.pr, sh(gl.VERTEX_SHADER, 'uniform mat4 u; attribute vec3 p; void main(){ gl_Position = u * vec4(p, 1.0); }'));
+      gl.attachShader(this.pr, sh(gl.VERTEX_SHADER, 'uniform mat4 u; uniform float k; attribute vec3 p; void main(){ gl_Position = u * vec4(p, 1.0); gl_Position.z -= k * gl_Position.w; }'));
       gl.attachShader(this.pr, sh(gl.FRAGMENT_SHADER, 'precision mediump float; uniform vec4 c; void main(){ gl_FragColor = c; }'));
       gl.linkProgram(this.pr); this.vbo = new WeakMap(); },
     render(gl, args) {
       if (!sat.length) return;
       const m = (args && args.defaultProjectionData && args.defaultProjectionData.mainMatrix) || args, P = PF(), loc = gl.getAttribLocation(this.pr, 'p');
       gl.useProgram(this.pr); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
-      gl.uniform4f(gl.getUniformLocation(this.pr, 'c'), 0.55, 0.9, 1.0, SAT_ALPHA);
+      gl.uniform4f(gl.getUniformLocation(this.pr, 'c'), 0.55, 0.9, 1.0, SAT_ALPHA); gl.uniform1f(gl.getUniformLocation(this.pr, 'k'), DEPTH_BIAS);
       for (const b of sat) {
         let v = this.vbo.get(b); if (!v) { v = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, v); gl.bufferData(gl.ARRAY_BUFFER, b.buf, gl.STATIC_DRAW); this.vbo.set(b, v); }
-        const o = P.toMercator(b.anchor.lat, b.anchor.lon, b.gz), r = new Float32Array(m); // the lift the buffer was built with (as perf.js caches it)
+        const o = P.toMercator(b.anchor.lat, b.anchor.lon, b.gz + (b.E || 0) - elevNow()), r = new Float32Array(m); // build lift, kept in the live frame as E moves
         for (let k = 0; k < 4; k++) r[12 + k] = m[k] * o.x + m[4 + k] * o.y + m[8 + k] * o.z + m[12 + k];
         gl.bindBuffer(gl.ARRAY_BUFFER, v); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
         gl.uniformMatrix4fv(gl.getUniformLocation(this.pr, 'u'), false, r); gl.drawArrays(gl.LINES, 0, b.buf.length / 3);
@@ -177,15 +202,27 @@
     try { if (!S.map.getLayer(layer.id)) S.map.addLayer(layer); } catch (e) { /* style still loading; style.load re-adds */ }
     S.repaint();
   }
-  // The receipt panel sits above the landing caption (#info, which carries the pylons line); never over it.
-  function place() {
-    const inf = document.getElementById('info'); if (!box) return;
-    box.style.bottom = '8px';
-    if (!inf || !inf.textContent.trim() || inf.offsetParent === null) return;
-    const a = box.getBoundingClientRect(), c = inf.getBoundingClientRect();
-    if (a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom) box.style.bottom = Math.ceil(innerHeight - c.top + 6) + 'px';
+  // The one-line receipt never covers a caption: it starts just above the attribution strip and steps up above any
+  // VISIBLE caption it would touch (#where, #sim-note, the pylon and procedural captions, anything fixed at the foot).
+  function captions() {
+    const out = [];
+    for (const el of document.body.querySelectorAll('body > *, body > * > [id]')) {
+      if (el === box || box.contains(el) || el.id === 'sim-menu' || el.tagName === 'SCRIPT' || !el.textContent.trim()) continue;
+      const cs = getComputedStyle(el); if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+      if (el.checkVisibility && !el.checkVisibility({ checkOpacityProperty: true, checkVisibilityCSS: true })) continue;
+      const r = el.getBoundingClientRect(); if (r.width > 0 && r.height > 0 && r.top > innerHeight / 2) out.push(r);
+    }
+    return out;
   }
-
+  function place() {
+    if (!box) return;
+    let bottom = 0; const cs = captions();
+    for (let k = 0; k < 12; k++) {
+      box.style.bottom = bottom + 'px';
+      const a = line.getBoundingClientRect(), hit = cs.find(c => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom);
+      if (!hit) break; bottom = Math.ceil(innerHeight - hit.top + 3);
+    }
+  }
   async function fetchProduct(key, k) {
     const t = tiles.get(key), src = R5.SOURCES[k], b = R5.clip(t.tile, src.env);
     if (!b) { t[k] = { none: 'outside the service envelope' }; return; }
@@ -251,8 +288,9 @@
     S.map.flyTo = (...a) => { arriving = true; return fly(...a); };
     S.map.on('style.load', sync);
     const inf = document.getElementById('info'); if (inf && window.MutationObserver) new MutationObserver(place).observe(inf, { childList: true, characterData: true, subtree: true });
-    addEventListener('resize', place);
-    S.map.on('idle', () => { for (const [k, t] of tiles) if (t.H && Math.abs(terrainAt(t.anchor.lon, t.anchor.lat) - t.gz) > 0.01) draw(k); });
+    addEventListener('resize', place); setInterval(place, 1000); // captions come and go (the 8 s note); cheap
+    addEventListener('keydown', e => { if (e.key === 'Escape' && open) setOpen(false); });
+    S.map.on('idle', () => { for (const [k, t] of tiles) if (t.H && (Math.abs(terrainAt(t.anchor.lon, t.anchor.lat) - t.gz) > 0.01 || Math.abs(elevNow() - (t.E || 0)) > 0.01)) draw(k); });
     S.map.on('moveend', () => { if (arriving) { arriving = false; arrive('find or go'); } });
     for (const [id, w] of [['walk', 'Walk'], ['drone', 'Drone'], ['here', 'Build here']]) {
       const el = document.getElementById(id); if (el) el.addEventListener('click', () => setTimeout(() => arrive(w), 1200));
@@ -264,10 +302,9 @@
       useFixture(fn, gapMs) { fetchImpl = fn; gapOverride = gapMs == null ? null : gapMs; pacer.state.next = 0; },
       segs: () => [...tiles.values()].flatMap(t => t.blks || []).reduce((s, b) => s + b.lines.length, 0),
       layer: () => ({ satellite: satMode(), own: sat.length, inWire: S.blocks.filter(b => b.lidarStream).length, alpha: SAT_ALPHA, onMap: !!S.map.getLayer(layer.id) }),
-      overlap: () => { const inf = document.getElementById('info'), a = panel().getBoundingClientRect(), c = inf ? inf.getBoundingClientRect() : null;
-        return { receipt: a.toJSON(), info: c && c.toJSON(), overlaps: !!c && a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom }; },
+      line: () => { panel(); return { text: line.textContent, rect: line.getBoundingClientRect().toJSON(), open }; }, setOpen, place,
       blocks: () => [...tiles.values()].flatMap(t => t.blks || []).map(b => ({ kind: b.kind, prov: b.prov, receipt: b.receipt, lat: b.lat, lon: b.lon, n: b.lines.length })),
-      receipt: () => panel().textContent
+      receipt: () => panel().textContent  // the full receipt (shown on click)
     };
   });
 })();
