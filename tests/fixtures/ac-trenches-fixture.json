@@ -1,16 +1,905 @@
 {
- "ref": "SYNTHETIC",
- "register_point": [-1.5, 52.0],
- "section": {
-  "duct_od_m": {"value": 0.0965, "source": "fixture"},
-  "gap_m": {"value": 0.1, "source": "fixture"},
-  "margin_m": {"value": 0.1, "source": "fixture"},
-  "bed_m": {"value": 0.05, "source": "fixture"},
-  "depth_m": {"value": 0.9, "source": "fixture"}
- },
- "cover_m": {"value": 0.67, "reference_m": 0.91},
- "nodes": [[-1.5, 52.0], [-1.4985, 52.0], [-1.4985, 52.0009]],
- "edges": [[0, 1], [1, 2]],
- "bunds": [{"id": "X1", "centre": [-1.4984, 52.0010], "wall": [[-1.49848, 52.00095], [-1.49832, 52.00095], [-1.49832, 52.00105], [-1.49848, 52.00105]], "size_m": [11, 11], "rot_deg": 0, "face_names": ["S", "E", "N", "W"]}],
- "designs": {"T": {"label": "fixture", "inverters": [], "variants": {"1": {"label": "one face", "counts": [[0, 14], [1, 28]], "totals": {}, "checks": {}}}}}
+"schema": "ac-trenches-v2",
+"repd": "REPD 0000",
+"register_point": [
+1.0,
+52.0
+],
+"frame": {
+"kind": "local E/N metres",
+"lon0": 1.0,
+"lat0": 52.0,
+"KX": 68677.0,
+"KY": 111256.0
+},
+"installations": {
+"A": {
+"label": "A: 3 x 1C 400 mm2 Al XLPE/PVC unarmoured, one duct per inverter, bund side holes",
+"scenario": "Scenario A: bunded station, side-entry ducts (illustrative)",
+"cable": {
+"od_mm": {
+"default": 31.5,
+"min": 29.7,
+"max": 33.5,
+"status": "assumed (no catalogue entry): 29.7 datasheet NA2XY 1x400; 31.5 derived from the 23.70 mm conductor + 2.0 mm XLPE + 1.9 mm sheath; 33.5 assumed upper bound"
+},
+"mbr_mm": {
+"default": 472,
+"min": 356,
+"max": 503,
+"status": "assumed: 15 x OD (single-core datasheet basis; 12-15 x OD range)"
+}
+},
+"duct": {
+"rule": "smallest duct in the table whose jam ratio stays small or very small (preferred: very small) over the assumed OD range scaled to the edited OD, fill <= 40 %, clearance >= max(10 % of ID, 25.4 mm); trefoil circle 2.1547 x OD must fit",
+"default": "125 x 7.4 SDR17 PE (ID 110.2 mm), minimum bend 2,500 mm (20 x OD, datasheet)",
+"status": "derived (duct scout D; Southwire PCM 4th ed. eq. 7-24, 7-26, Fig. 7-13, 7-16, Table 7-8 cited, not copied; fill limit is a US code basis, assumed for a UK site)"
+},
+"jam_bands": [
+[
+2.4,
+"very small"
+],
+[
+2.5,
+"small"
+],
+[
+2.6,
+"moderate"
+],
+[
+2.9,
+"significant"
+],
+[
+3.0,
+"moderate"
+],
+[
+3.2,
+"small"
+],
+[
+1000000000.0,
+"very small"
+]
+],
+"width": {
+"formula": "n ducts x duct OD + (n - 1) x 0.100 m + 2 x 0.100 m",
+"status": "owner design page geometry (gap and margins), applied to one duct per inverter"
+},
+"entry": {
+"straight_m": 1.0,
+"status": "assumed: straight perpendicular entry after the bend, before the wall"
+},
+"holes": {
+"diameter_mm": 160,
+"range_mm": [
+125,
+200
+],
+"invert_m": 0.8,
+"invert_range_m": [
+0.6,
+1.1
+],
+"status": "assumed: pre-drilled, evenly spread along each wall, one per duct; count per side = ducts assigned to that side"
+},
+"bund": {
+"wall_above_m": 0.5,
+"footing_m": 0.6,
+"status": "assumed concrete bund geometry (drawn only)"
+}
+},
+"B": {
+"label": "B: 1C 400 mm2 Al ATA armoured (HDPE sheath), direct buried, piled station, bottom entry",
+"scenario": "Scenario B: direct-buried armoured, piled station (illustrative; owner specification)",
+"cable": {
+"od_mm": {
+"default": 37.4,
+"status": "datasheet: owner Cable Geometry catalogue, data-solar.js sc_al_ata_ac_400"
+},
+"mbr_mm": {
+"default": 449,
+"status": "datasheet: same entry, 12 x OD"
+}
+},
+"width": {
+"formula": "3n cables in one flat layer: 3n x OD + (3n - 1) x spacing + 2 x 0.100 m; spacing = 1 x OD clear (assumed; timber spacers)",
+"status": "assumed"
+},
+"entry": {
+"straight_m": 0.5,
+"status": "assumed: straight approach before the upsweep at the MBR into bottom-entry gland plates"
+},
+"road_duct": "under a road the 3 armoured cores of one circuit share a duct: 140 SDR17 PE (ID 123.4 mm) passes the same jam/fill rule (derived, duct scout D)",
+"piles": {
+"per_unit": 6,
+"grid": "3 x 2",
+"spacing_m": [
+2.4,
+2.2
+],
+"shaft_m": 3.0,
+"shaft_d_m": 0.089,
+"helix_d_m": 0.35,
+"cap_above_ground_m": 0.6,
+"status": "assumed screw piles, drawn as geometry only; soil and settlement are out of scope (soil repo)"
+}
+}
+},
+"duct_table": [
+{
+"id": "emt_pe_90_sdr17",
+"family": "PE smooth SDR17",
+"od_mm": 90.0,
+"id_mm": 79.2,
+"bend": {
+"mm": 1800,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect PE datasheet MHT2871 Iss A",
+"uk": true
+},
+{
+"id": "emt_c1_110_sdr11",
+"family": "PE smooth SDR11",
+"od_mm": 110.0,
+"id_mm": 90.0,
+"bend": {
+"mm": 2200,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "dl_4in_sdr11",
+"family": "HDPE smooth SDR11",
+"od_mm": 114.3,
+"id_mm": 92.3,
+"bend": {
+"mm": 1270,
+"status": "datasheet (US product)"
+},
+"source": "Dura-Line Smoothwall datasheet DL.SMOOTHWALL-US.6.2025",
+"uk": false
+},
+{
+"id": "emt_c1_110_sdr17",
+"family": "PE smooth SDR17",
+"od_mm": 110.0,
+"id_mm": 96.8,
+"bend": {
+"mm": 2200,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "naylor_120_100",
+"family": "twin wall PP",
+"od_mm": 120.0,
+"id_mm": 100.0,
+"bend": {
+"mm": 1500,
+"status": "assumed (range 1000-3000; no published radius read)"
+},
+"source": "Naylor MetroDuct Class 1 product page (naylordrainage.co.uk)",
+"uk": true
+},
+{
+"id": "dl_4in_sdr17",
+"family": "HDPE smooth SDR17",
+"od_mm": 114.3,
+"id_mm": 100.0,
+"bend": {
+"mm": 1270,
+"status": "datasheet (US product)"
+},
+"source": "Dura-Line Smoothwall datasheet DL.SMOOTHWALL-US.6.2025",
+"uk": false
+},
+{
+"id": "dl_4in_sch40",
+"family": "HDPE smooth SCH40",
+"od_mm": 114.3,
+"id_mm": 101.5,
+"bend": {
+"mm": 1270,
+"status": "datasheet (US product)"
+},
+"source": "Dura-Line Smoothwall datasheet DL.SMOOTHWALL-US.6.2025",
+"uk": false
+},
+{
+"id": "emt_c1_125_sdr11",
+"family": "PE smooth SDR11",
+"od_mm": 125.0,
+"id_mm": 102.2,
+"bend": {
+"mm": 2500,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "emt_c1_125_sdr17",
+"family": "PE smooth SDR17",
+"od_mm": 125.0,
+"id_mm": 110.2,
+"bend": {
+"mm": 2500,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "dl_5in_sdr11",
+"family": "HDPE smooth SDR11",
+"od_mm": 141.3,
+"id_mm": 114.0,
+"bend": {
+"mm": 1549,
+"status": "datasheet (US product)"
+},
+"source": "Dura-Line Smoothwall datasheet DL.SMOOTHWALL-US.6.2025",
+"uk": false
+},
+{
+"id": "emt_c1_140_sdr11",
+"family": "PE smooth SDR11",
+"od_mm": 140.0,
+"id_mm": 114.6,
+"bend": {
+"mm": 2800,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "emt_c1_140_sdr17",
+"family": "PE smooth SDR17",
+"od_mm": 140.0,
+"id_mm": 123.4,
+"bend": {
+"mm": 2800,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "dl_5in_sdr17",
+"family": "HDPE smooth SDR17",
+"od_mm": 141.3,
+"id_mm": 123.7,
+"bend": {
+"mm": 1549,
+"status": "datasheet (US product)"
+},
+"source": "Dura-Line Smoothwall datasheet DL.SMOOTHWALL-US.6.2025",
+"uk": false
+},
+{
+"id": "nsp_150_125",
+"family": "twin wall (DNO table)",
+"od_mm": 150.0,
+"id_mm": 125.0,
+"bend": {
+"mm": 1500,
+"status": "assumed (range 1000-3000; no published radius read)"
+},
+"source": "Northern Powergrid NSP/002 v5.0 Table 5 (nominal OD/ID)",
+"uk": true
+},
+{
+"id": "naylor_145_125",
+"family": "twin wall PP",
+"od_mm": 145.0,
+"id_mm": 125.0,
+"bend": {
+"mm": 1500,
+"status": "assumed (range 1000-3000; no published radius read)"
+},
+"source": "Naylor MetroDuct Class 1 product page (naylordrainage.co.uk)",
+"uk": true
+},
+{
+"id": "emt_c1_160_sdr11",
+"family": "PE smooth SDR11",
+"od_mm": 160.0,
+"id_mm": 130.8,
+"bend": {
+"mm": 3200,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "dl_6in_sdr11",
+"family": "HDPE smooth SDR11",
+"od_mm": 168.3,
+"id_mm": 135.9,
+"bend": {
+"mm": 1854,
+"status": "datasheet (US product)"
+},
+"source": "Dura-Line Smoothwall datasheet DL.SMOOTHWALL-US.6.2025",
+"uk": false
+},
+{
+"id": "emt_c1_160_sdr17",
+"family": "PE smooth SDR17",
+"od_mm": 160.0,
+"id_mm": 141.0,
+"bend": {
+"mm": 3200,
+"status": "datasheet"
+},
+"source": "Emtelle PowerProtect+ C1+ datasheet MHT2879 Iss B",
+"uk": true
+},
+{
+"id": "nsp_175_150",
+"family": "twin wall (DNO table)",
+"od_mm": 175.0,
+"id_mm": 150.0,
+"bend": {
+"mm": 1500,
+"status": "assumed (range 1000-3000; no published radius read)"
+},
+"source": "Northern Powergrid NSP/002 v5.0 Table 5 (nominal OD/ID)",
+"uk": true
+},
+{
+"id": "naylor_178_150",
+"family": "twin wall PP",
+"od_mm": 178.0,
+"id_mm": 150.0,
+"bend": {
+"mm": 1500,
+"status": "assumed (range 1000-3000; no published radius read)"
+},
+"source": "Naylor MetroDuct Class 1 product page (naylordrainage.co.uk)",
+"uk": true
+}
+],
+"bunds": [
+{
+"id": "T1",
+"cls": "A",
+"units_to_draw": 2,
+"units_label": "two units seen",
+"centre": [
+1.0,
+52.0
+],
+"size_m": [
+16,
+12
+],
+"bearing_deg": 90,
+"walls": [
+{
+"side": "N",
+"p0": [
+-8,
+6
+],
+"p1": [
+8,
+6
+],
+"out": [
+0,
+1
+],
+"len": 16
+},
+{
+"side": "E",
+"p0": [
+8,
+6
+],
+"p1": [
+8,
+-6
+],
+"out": [
+1,
+0
+],
+"len": 12
+},
+{
+"side": "S",
+"p0": [
+8,
+-6
+],
+"p1": [
+-8,
+-6
+],
+"out": [
+0,
+-1
+],
+"len": 16
+},
+{
+"side": "W",
+"p0": [
+-8,
+-6
+],
+"p1": [
+-8,
+6
+],
+"out": [
+-1,
+0
+],
+"len": 12
+}
+]
+},
+{
+"id": "T2",
+"cls": "B",
+"units_to_draw": 0,
+"units_label": "contents unclear",
+"centre": [
+1.0014560915590371,
+52.0
+],
+"size_m": [
+16,
+12
+],
+"bearing_deg": 90,
+"walls": [
+{
+"side": "N",
+"p0": [
+92,
+6
+],
+"p1": [
+108,
+6
+],
+"out": [
+0,
+1
+],
+"len": 16
+},
+{
+"side": "E",
+"p0": [
+108,
+6
+],
+"p1": [
+108,
+-6
+],
+"out": [
+1,
+0
+],
+"len": 12
+},
+{
+"side": "S",
+"p0": [
+108,
+-6
+],
+"p1": [
+92,
+-6
+],
+"out": [
+0,
+-1
+],
+"len": 16
+},
+{
+"side": "W",
+"p0": [
+92,
+-6
+],
+"p1": [
+92,
+6
+],
+"out": [
+-1,
+0
+],
+"len": 12
+}
+]
+}
+],
+"roads": {
+"section": {
+"surface_m": 0.15,
+"subbase_m": 0.3,
+"status": "assumed cross-section: running surface over granular sub-base; widths estimated from imagery"
+},
+"tracks": [
+{
+"id": "X1",
+"kind": "spine",
+"width_m": 6.0,
+"width_status": "test",
+"line": [
+-80,
+0,
+80,
+0
+]
+}
+]
+},
+"cases": {
+"A4": {
+"inst": "A",
+"sides": 4,
+"edges": [
+[
+0,
+"c",
+7,
+5.0,
+1,
+0,
+-60,
+9.5,
+0,
+9.5
+],
+[
+0,
+"c",
+14,
+1.2,
+1,
+0,
+-60,
+-20,
+0,
+-20,
+0,
+-30
+],
+[
+0,
+"a",
+1,
+99,
+1,
+0,
+-6.857,
+9.5,
+-6.857,
+6
+]
+],
+"crossings": [
+[
+-30,
+9.5,
+7,
+6.0,
+"crossing"
+]
+],
+"bends": [
+[
+0,
+-20,
+1.0,
+90.0,
+0
+],
+[
+-60,
+9.5,
+3.0,
+45.0,
+0
+]
+],
+"ports": [
+{
+"si": 0,
+"side": "N",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+},
+{
+"si": 0,
+"side": "E",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+},
+{
+"si": 0,
+"side": "S",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+},
+{
+"si": 0,
+"side": "W",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+}
+],
+"routes_en": [],
+"widest": {
+"si": 0,
+"n": 14,
+"L": 1,
+"V": [
+[
+-60,
+-20
+],
+[
+0,
+-20
+]
+]
+},
+"stations": [
+{
+"si": 0,
+"id": "T1",
+"sides": {
+"N": 7,
+"E": 7,
+"S": 7,
+"W": 7
+},
+"routes": 28,
+"ducts_at_ports": 28,
+"unreachable": 0,
+"trench_km": 0.13,
+"widest_n": 14,
+"widest_w": 1.9,
+"widest_L": 1,
+"chain_rows_m": 0,
+"env_rows_m2": 0,
+"d_track_med": 5,
+"row_clear_med": 1,
+"road_crossings": 1
+}
+],
+"totals": {
+"routes": 28,
+"cables": 84,
+"road_crossings": 1
+}
+},
+"B4": {
+"inst": "B",
+"sides": 4,
+"edges": [
+[
+0,
+"c",
+7,
+5.0,
+1,
+0,
+-60,
+9.5,
+0,
+9.5
+],
+[
+0,
+"c",
+14,
+1.2,
+1,
+0,
+-60,
+-20,
+0,
+-20,
+0,
+-30
+],
+[
+0,
+"a",
+1,
+99,
+1,
+0,
+-6.857,
+9.5,
+-6.857,
+6
+]
+],
+"crossings": [
+[
+-30,
+9.5,
+7,
+6.0,
+"crossing"
+]
+],
+"bends": [
+[
+0,
+-20,
+1.0,
+90.0,
+0
+],
+[
+-60,
+9.5,
+3.0,
+45.0,
+0
+]
+],
+"ports": [
+{
+"si": 0,
+"side": "N",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+},
+{
+"si": 0,
+"side": "E",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+},
+{
+"si": 0,
+"side": "S",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+},
+{
+"si": 0,
+"side": "W",
+"nh": 7,
+"clear": [
+3.5,
+3.5,
+3.4,
+3.6,
+40,
+2.0,
+3.5
+]
+}
+],
+"routes_en": [],
+"widest": {
+"si": 0,
+"n": 14,
+"L": 1,
+"V": [
+[
+-60,
+-20
+],
+[
+0,
+-20
+]
+]
+},
+"stations": [
+{
+"si": 0,
+"id": "T1",
+"sides": {
+"N": 7,
+"E": 7,
+"S": 7,
+"W": 7
+},
+"routes": 28,
+"ducts_at_ports": 28,
+"unreachable": 0,
+"trench_km": 0.13,
+"widest_n": 14,
+"widest_w": 1.9,
+"widest_L": 1,
+"chain_rows_m": 0,
+"env_rows_m2": 0,
+"d_track_med": 5,
+"row_clear_med": 1,
+"road_crossings": 1
+}
+],
+"totals": {
+"routes": 28,
+"cables": 84,
+"road_crossings": 1
+}
+}
+}
 }
