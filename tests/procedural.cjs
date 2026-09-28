@@ -15,6 +15,15 @@ const server = http.createServer((q, s) => {
   s.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(s);
 });
 const results = []; const check = (name, ok, ev) => results.push({ name, ok: !!ok, evidence: String(ev).slice(0, 300) });
+// Pure unit check (round r8): lift keptSay out of procedural.js and feed it kept <= 0; the caption must carry no minus and no 'fewer'.
+{ const src = fs.readFileSync(path.join(ROOT, 'mod', 'procedural.js'), 'utf8'), m = src.match(/\/\/ keptSay:begin[^\n]*\n([\s\S]*?)\/\/ keptSay:end/);
+  const keptSay = m && new Function(m[1] + '\nreturn keptSay;')();
+  const cases = keptSay ? [[0, 339], [-4, 339], [-1234, 12]].map(([k, z]) => ({ k, z, t: keptSay(k, z) })) : [];
+  check('unit: keptSay with kept <= 0 has no minus sign and no "fewer", and says no tables lost with the zone count',
+    cases.length === 3 && cases.every(c => !/[-−]/.test(c.t) && !/fewer/.test(c.t) && /^no tables lost to the line \(the [\d,]+ positions inside the line zones were placed on free ground in the box; illustrative\)$/.test(c.t) && c.t.includes(c.z.toLocaleString('en-GB'))),
+    JSON.stringify(cases));
+  const pos = keptSay && keptSay(5, 339);
+  check('unit: keptSay with kept > 0 still gives the drawn difference', pos === '5 fewer tables drawn than without the line (339 positions inside the line zones left empty, the rest placed on free ground in the box; illustrative)', pos); }
 async function browser() {
   if (process.env.CHROME_GPU_LAUNCHER) return require(process.env.CHROME_GPU_LAUNCHER).launch();
   const { chromium } = require('playwright');
@@ -82,7 +91,7 @@ async function browser() {
     return { spans: g.ohl.length, reach: [...new Set(g.ohl.map(z => z.kv + ' kV ' + z.reachM + ' m'))], tables: g.tables.length, containers, others: window.__procedural.shown.map(h => h.ref + ': ' + h.geom.ohl.length + ' spans, ' + h.geom.skipped + ' kept out'), skipped: g.skipped, bad, worstSlackM: +worst.toFixed(2), text: f.text }; });
   check('6502: real overhead line spans passed to the layout', clr && clr.spans > 0, JSON.stringify(clr && { spans: clr.spans, reach: clr.reach }));
   check('6502 view: no table and no container within reachM + margin of any line span', clr && clr.bad === 0 && clr.tables > 1000, JSON.stringify(clr && { tables: clr.tables, containers: clr.containers, bad: clr.bad, worstSlackM: clr.worstSlackM, others: clr.others }));
-  check('6502: kept-out readout is the drawn difference, with the positions in the zones named separately', clr && clr.skipped >= 0 && new RegExp(`${clr.skipped.toLocaleString('en-GB')} fewer tables drawn than without the line \\([\\d,]+ positions inside the line zones left empty`).test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
+  check('6502: kept-out readout is the drawn difference, with the positions in the zones named separately', clr && Number.isInteger(clr.skipped) && (clr.skipped > 0 ? new RegExp(`${clr.skipped.toLocaleString('en-GB')} fewer tables drawn than without the line \\([\\d,]+ positions inside the line zones left empty`) : /no tables lost to the line \(the [\d,]+ positions inside the line zones were placed on free ground/).test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
   const dr = await p.evaluate(() => { const g = window.__procedural.shown.find(x => x.ref === 6502).geom; return { withLine: g.tables.length, withoutLine: g.tablesWithoutLine, kept: g.skipped, inZones: g.positionsInZones }; });
   check('6502: tables drawn without the line minus tables drawn with it == kept out (own no-line layout)', dr.withoutLine - dr.withLine === dr.kept, JSON.stringify(dr));
   check('6502: drawn(404 page, no 400 kV, no spans) - drawn(normal) == kept out reported on the normal page', kv404Fit && kv404Fit.spans === 0 && kv404Fit.tables - dr.withLine === dr.kept,

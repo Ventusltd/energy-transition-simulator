@@ -9,6 +9,15 @@
 // Arrival and view only: the register index is the overlay's own local file; nothing is fetched on movement.
 (function () {
   'use strict';
+  // keptSay:begin (pure; tests/procedural.cjs lifts this block out and runs it in Node)
+  // kept = tables drawn without the line minus tables drawn with it. It can be 0 or negative when the positions
+  // inside the line zones were made up from free ground in the box; the caption then never shows a minus or 'fewer'.
+  function keptSay(kept, inZones) {
+    const z = Number(inZones || 0).toLocaleString('en-GB');
+    if (!(kept > 0)) return `no tables lost to the line (the ${z} positions inside the line zones were placed on free ground in the box; illustrative)`;
+    return `${kept.toLocaleString('en-GB')} fewer tables drawn than without the line (${z} positions inside the line zones left empty, the rest placed on free ground in the box; illustrative)`;
+  }
+  // keptSay:end
   // kV line file status (round r5), recorded HERE without touching pylons-real: its catch leaves lines[kv] = [] when a
   // fetch fails, which looks like a loaded empty file. So procedural watches the page's own resource timings for the
   // grid_<kv>kv.geojson requests (nothing fetched here) and treats a kV as UNKNOWN when its file produced no lines at all.
@@ -197,7 +206,7 @@
             boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], rowsV } },
         text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, ${rowTag}, `
           + `site box ${areaHa.toFixed(1)} ha = ${mwPerHa.toFixed(2)} MW/ha (${CALIB.mwPerHaTag}), ${res.built.stations} stations; `
-          + ohlSay(ohlR, `${kept.toLocaleString('en-GB')} fewer tables drawn than without the line (${inZones.toLocaleString('en-GB')} positions inside the line zones left empty, the rest placed on free ground in the box; illustrative)`)
+          + ohlSay(ohlR, keptSay(kept, inZones))
           + `; ${SQUARE}` };
     }
     function bess(r) {                                          // ASSUMED yard rule (see BESS above)
