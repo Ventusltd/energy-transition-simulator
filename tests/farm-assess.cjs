@@ -285,12 +285,19 @@ T('(des12) transfer limit hit: never "none in box"; says not fully checked', () 
 
 // Round 13: the England guard, decided from the ALC answer already fetched.
 const alcOf = feats => A.assessBox(feats, bx12);
-T('(eng13) 0% England (all "no ALC polygon", ALC ok): every designation line "not checked (no England land in box)", never "none in box"; ALC note says England only', () => {
+T('(eng13) 0% England (all "no ALC polygon", ALC ok): every designation line NO_ENG, never "none in box"; ALC note says England only', () => {
   const res = alcOf([]), eng = A.englandPart(res, false), t = A.desText(null, false, eng), tp = A.desText(null, true, eng), t2 = A.desText(okAll({}), false, eng);
   const lines = t.split('\n').slice(1), n = A.alcEngText(eng, false), np = A.alcEngText(eng, true);
   return [eng.known && eng.zero && eng.share === 0 && lines.length === 6 && lines.every(l => l.endsWith(': ' + A.NO_ENG)) && !/none in box/.test(t + tp + t2) && !/fetch failed/.test(t)
     && tp.startsWith('DESIGNATIONS: ' + A.NO_ENG + ': SSSI, National Landscape, National Park, Ramsar, SAC, SPA') && t2 === t
-    && /No England land in box/.test(n) && /England only/.test(n) && /No England land in box/.test(np), lines[0] + ' || ' + tp]; });
+    && /no NE ALC polygon/i.test(n) && /England only/.test(n) && /no NE ALC polygon/i.test(np), lines[0] + ' || ' + tp]; });
+T('(eng14) 0% England states its EVIDENCE, not a conclusion: no bare "No England land" on desktop or phone; "no NE ALC polygon" in the ALC note, the designations header, NO_ENG and the phone line; still "Not a statement that the land is poor"', () => {
+  const eng = A.englandPart(alcOf([]), false), n = A.alcEngText(eng, false), np = A.alcEngText(eng, true), t = A.desText(null, false, eng), tp = A.desText(null, true, eng);
+  const all = [n, np, t, tp, A.NO_ENG].join(' || ');
+  return [!/No England land/i.test(all) && [n, np, t, tp, A.NO_ENG].every(x => /no NE ALC polygon/i.test(x))
+    && n.includes('No NE ALC polygon in box, read as outside England [derived; ALC covers England only; estuaries or large water may also be unmapped]')
+    && t.split('\n')[0].includes('No NE ALC polygon in box, read as outside England [derived;') && A.NO_ENG === 'not checked (box read as outside England: no NE ALC polygon)'
+    && /read as outside England; ALC does not apply/.test(np) && np.length < 120 && /Not a statement that the land is poor/.test(n) && /Not a statement that the land is poor/.test(np), np + ' || ' + tp]; });
 T('(eng13) PARTIAL: England covers 37.5% of the box: per-layer lines kept, header and phone say "England part only: 37.5% of box"', () => {
   const res = alcOf([{ grade: 'Grade 3', rings: [sq(X0 - 50, Y0 - 50, X0 + 768, Y0 + 2100)] }]), eng = A.englandPart(res, false);
   const d = okAll({ SSSI: [{ attributes: {}, geometry: { rings: [sq(X0, Y0, X0 + 256, Y0 + 2048)] } }] }), t = A.desText(d, false, eng), tp = A.desText(d, true, eng);

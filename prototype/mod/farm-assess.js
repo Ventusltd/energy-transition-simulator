@@ -307,7 +307,9 @@
   // ALC covers all of England (urban and non-agricultural land carry their own grade), so the part of the box with no
   // ALC polygon is taken as outside England (Wales, Scotland or sea) [derived]. res: assessBox(...) or null when the ALC
   // fetch failed; exceeded: the ALC transfer limit was hit (the extent is then unknown, not guessed).
-  var NO_ENG = 'not checked (no England land in box)';
+  // Round 14: the zero-England wording states its evidence (no NE ALC polygon), not a conclusion about the land.
+  var NO_ENG = 'not checked (box read as outside England: no NE ALC polygon)';
+  var NO_ALC_EVID = 'No NE ALC polygon in box, read as outside England [derived; ALC covers England only; estuaries or large water may also be unmapped]';
   function englandPart(res, exceeded) {
     if (!res) return { known: false, why: 'ALC fetch failed' };
     if (exceeded) return { known: false, why: 'ALC answer incomplete' };
@@ -318,7 +320,7 @@
   // The ALC note on the same path: '' for a whole-England box or an unknown extent.
   function alcEngText(eng, phone) {
     if (!eng || !eng.known) return '';
-    if (eng.zero) return phone ? '  No England land in box: ALC (England only) does not apply here.' : '  No England land in box [derived: 0% of the box has an NE ALC polygon]: the provisional ALC covers England only, so no grade applies here. Not a statement that the land is poor.';
+    if (eng.zero) return phone ? '  No NE ALC polygon: read as outside England; ALC does not apply. Not a statement that the land is poor.' : '  ' + NO_ALC_EVID + ': 0% of the box has an NE ALC polygon, so no grade applies here. Not a statement that the land is poor.';
     if (eng.part) return phone ? '  England part only: ' + engPct(eng) + ' of box.' : '  England part only: ' + engPct(eng) + ' of box [derived from NE ALC cover]; the rest has no ALC polygon (outside England or sea), so it is not graded.';
     return '';
   }
@@ -339,7 +341,7 @@
   function desText(des, phone, eng) {
     if (eng && eng.known && eng.zero) {   // round 13: outside England, never "none in box"
       if (phone) return 'DESIGNATIONS: ' + NO_ENG + ': ' + DES.layers.map(function (L) { return L.label.replace(/ \(AONB\)/, ''); }).join(', ') + '.';
-      return ['DESIGNATIONS (Natural England statutory sites, England only; derived from the ALC answer: 0% of this box is in England, so no layer was asked):']
+      return ['DESIGNATIONS (Natural England statutory sites, England only; ' + NO_ALC_EVID + ', so no layer was asked):']
         .concat(DES.layers.map(function (L) { return '  ' + L.label + ': ' + NO_ENG; })).join('\n');
     }
     var ep = eng && eng.known && eng.part ? 'England part only: ' + engPct(eng) + ' of box' : '';
