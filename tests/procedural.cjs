@@ -15,6 +15,15 @@ const server = http.createServer((q, s) => {
   s.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(s);
 });
 const results = []; const check = (name, ok, ev) => results.push({ name, ok: !!ok, evidence: String(ev).slice(0, 300) });
+// Pure unit check (round r8): lift keptSay out of procedural.js and feed it kept <= 0; the caption must carry no minus and no 'fewer'.
+{ const src = fs.readFileSync(path.join(ROOT, 'mod', 'procedural.js'), 'utf8'), m = src.match(/\/\/ keptSay:begin[^\n]*\n([\s\S]*?)\/\/ keptSay:end/);
+  const keptSay = m && new Function(m[1] + '\nreturn keptSay;')();
+  const cases = keptSay ? [[0, 339], [-4, 339], [-1234, 12]].map(([k, z]) => ({ k, z, t: keptSay(k, z) })) : [];
+  check('unit: keptSay with kept <= 0 has no minus sign and no "fewer", and says no tables lost with the zone count',
+    cases.length === 3 && cases.every(c => !/[-−]/.test(c.t) && !/fewer/.test(c.t) && /^no tables lost to the line \(the [\d,]+ positions inside the line zones were placed on free ground in the box; illustrative\)$/.test(c.t) && c.t.includes(c.z.toLocaleString('en-GB'))),
+    JSON.stringify(cases));
+  const pos = keptSay && keptSay(5, 339);
+  check('unit: keptSay with kept > 0 still gives the drawn difference', pos === '5 fewer tables drawn than without the line (339 positions inside the line zones left empty, the rest placed on free ground in the box; illustrative)', pos); }
 async function browser() {
   if (process.env.CHROME_GPU_LAUNCHER) return require(process.env.CHROME_GPU_LAUNCHER).launch();
   const { chromium } = require('playwright');
@@ -28,6 +37,30 @@ async function browser() {
   const shot = n => p.screenshot({ path: path.join(OUT, n + '.png') });
   const state = () => p.evaluate(() => window.__procedural || null);
   const waitDrawn = async ms => { const t = Date.now(); let s; while (Date.now() - t < ms) { s = await state(); if (s && s.shown.length) return s; await p.waitForTimeout(500); } return s; };
+  // 0. Round r5: a kV line file that fails to load is UNKNOWN, never "no mapped overhead line within reach". One page with the
+  // 400 kV file answered 404; 6502 and 5394 must say not loaded / partial, and __proceduralOhl must report loaded:false.
+  let kv404Fit = null;
+  { const q = await b.newPage({ viewport: { width: 1280, height: 800 } }); let hit = 0;
+    await q.route('**/grid_400kv.geojson', r => { hit++; return r.fulfill({ status: 404, body: 'not found' }); });
+    await q.goto(`${base}?lat=51.33877&lon=0.91388&zoom=15`, { waitUntil: 'load' }); await q.waitForTimeout(8000);
+    const rd = await q.evaluate(() => ({ SIM: !!window.SIM, canvas: !!document.querySelector('canvas.maplibregl-canvas') }));
+    check('404 run: window.SIM and the map canvas present before any shot', rd.SIM && rd.canvas, JSON.stringify(rd));
+    await q.$eval('#procedural', x => x.click());
+    let f = null; for (let t = 0; t < 60 && !(f && f.a && f.b && f.a.ohlMissing && f.a.fitN > 0); t++) { await q.waitForTimeout(1000);
+      f = await q.evaluate(() => { const S = window.__procedural; if (!S) return null; const g = ref => { const x = S.shown.find(z => z.ref === ref); return x && { ohlMissing: x.geom.ohlMissing, loaded: x.geom.ohlLoaded, clr: x.text.split('; ').find(z => /overhead line/.test(z)), fitN: x.geom.formula ? x.geom.formula.fitN : null, rowAz: x.geom.formula ? x.geom.formula.rowAzDeg : null, layout: x.geom.formula ? x.geom.formula.layout : null, tables: x.geom.tables.length, spans: x.geom.ohl.length, kept: x.geom.skipped }; };
+        return { a: g(6502), b: g(5394), oa: window.__proceduralOhl(6502), ob: window.__proceduralOhl(5394) }; }); }
+    console.log('KV404', hit, JSON.stringify(f && { a: f.a, b: f.b, oa: f.oa && { loaded: f.oa.loaded, missing: f.oa.missing, http: f.oa.http, spans: f.oa.spans }, ob: f.ob && { loaded: f.ob.loaded, missing: f.ob.missing } }));
+    const say = /overhead line data for 400 kV not loaded: clearance (not applied|partial)/;
+    check('404 on the 400 kV line file: 6502 and 5394 say not loaded or partial, never "nothing kept out"', hit > 0 && f && f.a && f.b && say.test(f.a.clr) && say.test(f.b.clr) && !/nothing kept out/.test(f.a.clr + f.b.clr) && !f.a.loaded && !f.b.loaded,
+      JSON.stringify(f && { hit, a: f.a, b: f.b }));
+    check('404: __proceduralOhl reports loaded:false with 400 kV missing, for 6502 and 5394', f && f.oa && f.ob && f.oa.loaded === false && f.ob.loaded === false && f.oa.missing.includes('400') && f.ob.missing.includes('400'),
+      JSON.stringify(f && f.oa && { a: { loaded: f.oa.loaded, missing: f.oa.missing, http: f.oa.http }, b: f.ob && { loaded: f.ob.loaded, missing: f.ob.missing } }));
+    kv404Fit = f && f.a && { fitN: f.a.fitN, rowAz: f.a.rowAz, layout: f.a.layout, pressedScanner: false, tables: f.a.tables, spans: f.a.spans, kept: f.a.kept };
+    check('404 run, Scanner rows never pressed: 6502 still fits its rows (fitN > 0), rows loaded on arrival', kv404Fit && kv404Fit.fitN > 0, JSON.stringify(kv404Fit));
+    const rd2 = await q.evaluate(() => ({ SIM: !!window.SIM, canvas: !!document.querySelector('canvas.maplibregl-canvas') }));
+    check('404 run: window.SIM and the map canvas present before the shot', rd2.SIM && rd2.canvas, JSON.stringify(rd2));
+    await q.evaluate(() => { window.SIM.removeWhere(b => b.scannerRows); window.SIM.map.jumpTo({ center: [0.91388, 51.33877], zoom: 15, pitch: 0, bearing: 0 }); }); await q.waitForTimeout(4000);
+    await q.screenshot({ path: path.join(OUT, '0-kv404-solar-top.png') }); await q.close(); }
   // 1. A register solar farm (REPD 6502, 373 MW at its published point).
   await p.goto(`${base}?lat=51.33877&lon=0.91388&zoom=15`, { waitUntil: 'load' }); await p.waitForTimeout(8000);
   const ready = await p.evaluate(() => ({ SIM: !!window.SIM, canvas: !!document.querySelector('canvas.maplibregl-canvas'), gl: (() => { const g = document.querySelector('canvas.maplibregl-canvas').getContext('webgl2') || document.querySelector('canvas.maplibregl-canvas').getContext('webgl'); const e = g && g.getExtension('WEBGL_debug_renderer_info'); return e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : 'n/a'; })() }));
@@ -38,8 +71,12 @@ async function browser() {
   const farm = s1 && s1.shown.find(x => x.ref === 6502);
   check('solar farm at REPD 6502 drawn', farm && farm.segments > 1000, JSON.stringify(farm && { mw: farm.mw, segments: farm.segments, text: farm.text }));
   check('anchored at the register point', farm && farm.lat === 51.33877 && farm.lon === 0.91388, farm && `${farm.lat}, ${farm.lon}`);
-  check('6502 before any rows are loaded: south formula, tagged not calibrated', farm && farm.geom.formula.fitN === 0 && farm.geom.formula.rowAzDeg === 90 && /south formula, not calibrated/.test(farm.text),
-    farm && `${farm.geom.formula.layout}, az ${farm.geom.formula.rowAzDeg}: ${farm.text.slice(0, 160)}`);
+  // Round r6: the row file is loaded on arrival by procedural itself (Scanner rows' own loader), so the fit does not wait for
+  // the Scanner rows button. Wait for it before pressing anything else.
+  let s1a = s1; for (let t = 0; t < 30 && !(s1a && s1a.shown.some(x => x.ref === 6502 && x.geom.formula.fitN > 0)); t++) { await p.waitForTimeout(1000); s1a = await state(); }
+  const farmA = s1a && s1a.shown.find(x => x.ref === 6502);
+  check('6502 on arrival, Scanner rows not pressed: rows fitted (fitN > 0), not the south formula', farmA && farmA.geom.formula.fitN > 0 && !/south formula/.test(farmA.geom.formula.rowTag),
+    farmA && `${farmA.geom.formula.layout}, az ${farmA.geom.formula.rowAzDeg}, fitN ${farmA.geom.formula.fitN}`);
   // Load the measured rows the page offers (Scanner rows: the lab's row file), so the formula can fit to them.
   await p.evaluate(() => window.SIM.scannerRows.run()); await p.waitForTimeout(1500);
   // Wait for pylons-real's lines and the row fit to reach the layout (both load async; procedural redoes the site when they arrive).
@@ -54,7 +91,11 @@ async function browser() {
     return { spans: g.ohl.length, reach: [...new Set(g.ohl.map(z => z.kv + ' kV ' + z.reachM + ' m'))], tables: g.tables.length, containers, others: window.__procedural.shown.map(h => h.ref + ': ' + h.geom.ohl.length + ' spans, ' + h.geom.skipped + ' kept out'), skipped: g.skipped, bad, worstSlackM: +worst.toFixed(2), text: f.text }; });
   check('6502: real overhead line spans passed to the layout', clr && clr.spans > 0, JSON.stringify(clr && { spans: clr.spans, reach: clr.reach }));
   check('6502 view: no table and no container within reachM + margin of any line span', clr && clr.bad === 0 && clr.tables > 1000, JSON.stringify(clr && { tables: clr.tables, containers: clr.containers, bad: clr.bad, worstSlackM: clr.worstSlackM, others: clr.others }));
-  check('6502: table positions kept out reported', clr && clr.skipped > 0 && /table positions kept out of overhead line zones \(illustrative\)/.test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
+  check('6502: kept-out readout is the drawn difference, with the positions in the zones named separately', clr && Number.isInteger(clr.skipped) && (clr.skipped > 0 ? new RegExp(`${clr.skipped.toLocaleString('en-GB')} fewer tables drawn than without the line \\([\\d,]+ positions inside the line zones left empty`) : /no tables lost to the line \(the [\d,]+ positions inside the line zones were placed on free ground/).test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
+  const dr = await p.evaluate(() => { const g = window.__procedural.shown.find(x => x.ref === 6502).geom; return { withLine: g.tables.length, withoutLine: g.tablesWithoutLine, kept: g.skipped, inZones: g.positionsInZones }; });
+  check('6502: tables drawn without the line minus tables drawn with it == kept out (own no-line layout)', dr.withoutLine - dr.withLine === dr.kept, JSON.stringify(dr));
+  check('6502: drawn(404 page, no 400 kV, no spans) - drawn(normal) == kept out reported on the normal page', kv404Fit && kv404Fit.spans === 0 && kv404Fit.tables - dr.withLine === dr.kept,
+    JSON.stringify({ drawn404: kv404Fit && kv404Fit.tables, spans404: kv404Fit && kv404Fit.spans, drawnNormal: dr.withLine, keptOut: dr.kept, inZones: dr.inZones }));
   console.log('CLEARANCE 6502', JSON.stringify(clr));
   const info = await p.textContent('#procedural-caption');
   const gs = await p.evaluate(() => ({ style: window.__procedural.style, ghost: window.__proceduralGhost(), layer: !!window.SIM.map.getLayer('procedural-ghost'),
@@ -89,6 +130,10 @@ async function browser() {
     return { drawn: +drawn.toFixed(2), measured: +ib.measured.toFixed(2), nInBoxTest: ib.n, nFit: f.geom.formula.fitN, boxHalfM: +f.geom.formula.fitBoxHalfM.toFixed(1), diff: +diff.toFixed(2), rowTag: f.geom.formula.rowTag, layout: f.geom.formula.layout }; });
   check('6502: drawn row azimuth within 5 deg of the median measured row azimuth inside its own site box', az && az.nFit > 0 && Math.abs(az.nFit - az.nInBoxTest) <= 0.02 * az.nInBoxTest && az.diff <= 5 && new RegExp(`fitted to [\\d,]+ measured rows inside a ${Math.round(2 * az.boxHalfM).toLocaleString('en-GB')} m square around the register point`).test(az.rowTag), JSON.stringify(az));
   console.log('AZIMUTH 6502', JSON.stringify(az));
+  const normAz = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); return f && { fitN: f.geom.formula.fitN, rowAz: f.geom.formula.rowAzDeg, layout: f.geom.formula.layout }; });
+  const dAz = kv404Fit && normAz ? Math.abs(((kv404Fit.rowAz - normAz.rowAz) % 180 + 270) % 180 - 90) : NaN;
+  check('404 on the 400 kV file does not move the row fit: 6502 row azimuth within 1 deg of the normal run, same layout, same fitN', kv404Fit && normAz && kv404Fit.fitN > 0 && dAz <= 1 && kv404Fit.layout === normAz.layout && kv404Fit.fitN === normAz.fitN,
+    JSON.stringify({ kv404: kv404Fit, normal: normAz, dAz }));
   // A neighbouring solar site in the same view with no runs inside ITS OWN box is not credited with 6502's rows.
   const nb = await p.evaluate(() => window.__procedural.shown.filter(x => x.tech !== 'bess' && x.ref !== 6502).map(x => ({ ref: x.ref, mw: x.mw, fitN: x.geom.formula.fitN, inBoxTest: window.__inBox(x).n, boxHalfM: +x.geom.formula.fitBoxHalfM.toFixed(1), tag: x.geom.formula.rowTag })));
   check('neighbouring small solar site with no runs in its own box: south formula, not calibrated', nb.some(x => x.fitN === 0 && x.inBoxTest === 0 && /^south formula, not calibrated/.test(x.tag)), JSON.stringify(nb));
@@ -133,7 +178,7 @@ async function browser() {
   check('battery yard sized from capacity (217 containers less any kept out of line zones, assumed rule)', bess && bess.segments === 12 * (218 - bess.geom.skipped), JSON.stringify(bess && { segments: bess.segments, skipped: bess.geom.skipped, text: bess.text }));
   await p.$eval('#wire', x => x.click()); await p.waitForTimeout(2500); await shot('5-bess-wire');
   const cb = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 16769); return f && { spans: f.geom.ohl.length, skipped: f.geom.skipped, text: f.text }; });
-  check('storage: clearance stated', cb && (cb.spans ? /container positions kept out/.test(cb.text) : /no mapped overhead line within reach of this site box: nothing kept out|no overhead line data loaded for this site box: clearance not applied/.test(cb.text)), JSON.stringify(cb));
+  check('storage: clearance stated', cb && (cb.spans ? /container positions kept out/.test(cb.text) : /no mapped overhead line within reach of this site box: nothing kept out|no overhead line data loaded for this site box: clearance not applied|overhead line data for [\d ,and]+ kV not loaded/.test(cb.text)), JSON.stringify(cb));
   await p.$eval('#walk', x => x.click()); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('6a-bess-walk');
   await p.$eval('#drone', x => x.click()); await p.waitForTimeout(3000); await shot('6-bess-fly');
   // 3. A register solar site with no measured rows loaded (REPD 1335, 49.6 MW): the south formula, said so.
