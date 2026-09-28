@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/plant-layout.mjs at v12 commit 3adcee9 (file last changed a805801). Modular star family: public #146470 tableGeometry.
+// COPIED UNCHANGED from the v12 world (web/world/plant-layout.mjs) at v12 commit 3adcee9 (file last changed a805801). Modular star family: public #146470 tableGeometry.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // plant-layout.mjs: a solar plant laid out on measured ground inside a drawn boundary, from generic rules.
 //

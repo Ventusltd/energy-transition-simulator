@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/structure-presets.mjs at v12 commit 3adcee9 (file last changed a83209f). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/structure-presets.mjs) at v12 commit 3adcee9 (file last changed a83209f). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // structure-presets.mjs: generic plant presets from an open-data study of large operational UK solar farms, typed as
 // "preset <id>" (or "structure <id>"). Each sets typed values the owner can change afterwards; none sets the Solar

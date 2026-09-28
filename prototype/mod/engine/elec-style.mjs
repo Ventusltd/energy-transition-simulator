@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/elec-style.mjs at v12 commit 3adcee9 (file last changed fdfcbc4). Modular star family: public #148422 rgba.
+// COPIED UNCHANGED from the v12 world (web/world/elec-style.mjs) at v12 commit 3adcee9 (file last changed fdfcbc4). Modular star family: public #148422 rgba.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // elec-style.mjs: one table for what an electrical line looks like, by voltage level (e4 UI spec, section 3). The 3D
 // symbols (sld-symbols.mjs), the solar block's cables (block-ui.mjs, block-gpu.mjs), the SLD panel's classes

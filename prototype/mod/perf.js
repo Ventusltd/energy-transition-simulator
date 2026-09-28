@@ -13,7 +13,7 @@
 // render into `wire` itself and drop the per-frame bufferData/getAttribLocation/getUniformLocation/queryTerrainElevation.
 // (b) A module that edits b.buf in place must bump b.rev (or call SIM.perf.touch(b)); a new buf object is detected.
 // (c) Phone size (390 px): #here-readout and #pf-readout sit over the 2nd/3rd button rows and intercept taps on
-// "Rows from satellite"; #info covers the map attribution. (d) Measured 27 Sept, E:\swarm\proof\overlay\perf\measure.json.
+// "Rows from satellite"; #info covers the map attribution. (d) Measured 27 Sept; the measurement file is kept off the public repo.
 (function () {
   'use strict';
   const MOD_URL = (document.currentScript && document.currentScript.src) || location.href;

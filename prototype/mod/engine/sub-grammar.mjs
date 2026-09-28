@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/sub-grammar.mjs at v12 commit 3adcee9 (file last changed fda2061). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/sub-grammar.mjs) at v12 commit 3adcee9 (file last changed fda2061). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // sub-grammar.mjs: the typed words for the journey's first step (go substation 132 · next substation), kept out of
 // cmd-grammar.mjs (as repd-grammar.mjs is) so that file stays under the line cap. The words themselves are read by

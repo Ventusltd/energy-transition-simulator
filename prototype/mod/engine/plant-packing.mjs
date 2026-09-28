@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/plant-packing.mjs at v12 commit 3adcee9 (file last changed a83209f). Modular star family: public #147017 slice.
+// COPIED UNCHANGED from the v12 world (web/world/plant-packing.mjs) at v12 commit 3adcee9 (file last changed a83209f). Modular star family: public #147017 slice.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // plant-packing.mjs: how the tables of a plant fill its land. Two packings, both typed (packing fields | packing bands):
 //

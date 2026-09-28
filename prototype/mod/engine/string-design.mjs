@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/string-design.mjs at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #148079 stringDesign.
+// COPIED UNCHANGED from the v12 world (web/world/string-design.mjs) at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #148079 stringDesign.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // string-design.mjs: the string voltage of the solar block, worked out in the open. Owner's instruction (27 Sept): show
 // the truth, don't expose people. Modules in series and the site's coldest cell temperature are the owner's to change

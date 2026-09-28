@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cable-rating.mjs at v12 commit 3adcee9 (file last changed 604729d). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/cable-rating.mjs) at v12 commit 3adcee9 (file last changed 604729d). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cable-rating.mjs: continuous current rating of a 33 kV single-core aluminium XLPE cable laid direct in trefoil,
 // by the steady-state method of IEC 60287-1-1 (losses) and IEC 60287-2-1 (thermal resistances), and the size a

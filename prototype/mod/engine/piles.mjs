@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/piles.mjs at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #145217 pileStations.
+// COPIED UNCHANGED from the v12 world (web/world/piles.mjs) at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #145217 pileStations.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // piles.mjs: where the piles of a row of solar tables go, how far each stands out of the ground, how deep it
 // goes in, and what grading a row needs where the ground is too uneven for a straight table.

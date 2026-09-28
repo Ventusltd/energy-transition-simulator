@@ -1,4 +1,4 @@
-// gpu-rows: panel rows detected OFFLINE on the GPU (CuPy, NumPy witness: E:\swarm\overlay-test\gpu-rows\detect.py)
+// gpu-rows: panel rows detected OFFLINE on the GPU (CuPy, NumPy witness: detect.py, kept off the public repo)
 // from Esri z17 imagery, saved as lon/lat polylines (mod/gpu-rows-6502.json), placed here in real coordinates through
 // place-frame (WGS84 -> anchor tangent-plane metres) and revealed west to east as ten blocks, each with ONE buffer
 // built once. Everything is an ESTIMATE from imagery, not a survey. Plain script; attaches to window.SIM.

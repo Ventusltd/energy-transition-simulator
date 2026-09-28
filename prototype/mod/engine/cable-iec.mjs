@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cable-iec.mjs at v12 commit 3adcee9 (file last changed 3012c07). Modular star family: public #148197 makeCable.
+// COPIED UNCHANGED from the v12 world (web/world/cable-iec.mjs) at v12 commit 3adcee9 (file last changed 3012c07). Modular star family: public #148197 makeCable.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cable-iec.mjs: one buried single-core cable by the IEC 60287 thermal method: its build, losses and thermal resistances.
 // Laid direct or in ducts, by the steady-state thermal method of the IEC 60287 family. The group model that rates

@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cmd-grammar-senses.mjs at v12 commit 3adcee9 (file last changed b6ebfdb). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/cmd-grammar-senses.mjs) at v12 commit 3adcee9 (file last changed b6ebfdb). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cmd-grammar-senses.mjs: the binoculars words of the command line (binoculars, zoom, range), split out of cmd-grammar.mjs
 // to keep each cartridge under 400 lines. Pure: parse() hands each verb here with its words. They change no design value

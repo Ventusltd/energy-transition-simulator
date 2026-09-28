@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/mv-network.mjs at v12 commit 3adcee9 (file last changed 2c38e15). Modular star family: public #146440 equipmentSolids.
+// COPIED UNCHANGED from the v12 world (web/world/mv-network.mjs) at v12 commit 3adcee9 (file last changed 2c38e15). Modular star family: public #146440 equipmentSolids.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // mv-network.mjs: the medium-voltage network from the stations to the grid, as equipment outlines with solids
 // and cable routes, placed on the ground by the user.

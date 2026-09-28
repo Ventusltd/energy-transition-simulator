@@ -7,7 +7,7 @@ Usage: python bake.py <name> <E> <N> [search_m=3000] [step_m=5]
 """
 import sys, json, base64, os
 import numpy as np
-sys.path.insert(0, 'E:/gw/lidar-mirror/src')
+sys.path.insert(0, os.environ.get('LIDAR_MIRROR_SRC', 'lidar-mirror/src'))  # the private mirror store, set by the operator
 import mirror_store as ms
 
 ROOT = 'E:/lidar-mirror'

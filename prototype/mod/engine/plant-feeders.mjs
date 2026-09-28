@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/plant-feeders.mjs at v12 commit 3adcee9 (file last changed 604729d). Modular star family: public #146457 roadPath.
+// COPIED UNCHANGED from the v12 world (web/world/plant-feeders.mjs) at v12 commit 3adcee9 (file last changed 604729d). Modular star family: public #146457 roadPath.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // plant-feeders.mjs: the 33 kV feeders of a laid-out plant, routed along its roads, with their trenches and cables.
 //

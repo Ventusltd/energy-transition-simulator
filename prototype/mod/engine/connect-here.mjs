@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/connect-here.mjs at v12 commit 3adcee9 (file last changed 0562d4f). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/connect-here.mjs) at v12 commit 3adcee9 (file last changed 0562d4f). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // connect-here.mjs: the third step of the journey (owner direction 8.3): "connect here solar 50 at 132" drops a site where
 // you stand and plans an illustrative cable back to the nearest substation at that voltage: route length, current, cable

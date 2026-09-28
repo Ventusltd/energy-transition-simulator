@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/fault-level.mjs at v12 commit 3adcee9 (file last changed a36f410). Modular star family: public #148423 transformerFaultKA.
+// COPIED UNCHANGED from the v12 world (web/world/fault-level.mjs) at v12 commit 3adcee9 (file last changed a36f410). Modular star family: public #148423 transformerFaultKA.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // fault-level.mjs: prospective fault current at a solar block's LV board, by the impedance method. Pure: no imports, no DOM.
 // The transformer alone gives S / (sqrt3 U z); the inverters add their own limited contribution (1.2 x rated, assumed).

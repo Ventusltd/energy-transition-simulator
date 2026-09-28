@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/sld-rules.mjs at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: public #148057 economicSize.
+// COPIED UNCHANGED from the v12 world (web/world/sld-rules.mjs) at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: public #148057 economicSize.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // sld-rules.mjs: the generic electrical rules the single-line diagram generator shares (sld-plant.mjs, block-mv.mjs,
 // sld-graph.mjs): group factors for circuits sharing a trench, an economic step on top of the technical cable size,

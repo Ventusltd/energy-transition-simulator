@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/bs7671-checks.mjs at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/bs7671-checks.mjs) at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // bs7671-checks.mjs: checks on the LV cable engines from a cross-check against the national wiring rules. Clauses are
 // cited by number only; no table, figure or wording of the rules is held here. Every value below is ours, an input,

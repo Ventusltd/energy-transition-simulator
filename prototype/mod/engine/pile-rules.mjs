@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/pile-rules.mjs at v12 commit 3adcee9 (file last changed f52e11f). Modular star family: public #147905 revealAt.
+// COPIED UNCHANGED from the v12 world (web/world/pile-rules.mjs) at v12 commit 3adcee9 (file last changed f52e11f). Modular star family: public #147905 revealAt.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // pile-rules.mjs: the one set of pile rules shared by the pile row tool (piles.mjs), the plant layout (plant-piles.mjs)
 // and the solar block (block-build.mjs), with two profiles: fixed tilt and single-axis tracker.

@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/trench-design.mjs at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: public #148698 cable.
+// COPIED UNCHANGED from the v12 world (web/world/trench-design.mjs) at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: public #148698 cable.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // trench-design.mjs: a trench cross-section designed from the cables it has to carry.
 //

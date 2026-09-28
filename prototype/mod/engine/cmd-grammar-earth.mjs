@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cmd-grammar-earth.mjs at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #148228 parseEarth.
+// COPIED UNCHANGED from the v12 world (web/world/cmd-grammar-earth.mjs) at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #148228 parseEarth.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cmd-grammar-earth.mjs: the earthing words of the command line (earthing, earth, soil rho, bonding), split out of
 // cmd-grammar.mjs to keep each cartridge under 400 lines. Pure: parse() hands each verb here with its words.

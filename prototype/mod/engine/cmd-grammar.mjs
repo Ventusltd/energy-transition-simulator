@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cmd-grammar.mjs at v12 commit 3adcee9 (file last changed 0562d4f). Modular star family: public #20973 guard.
+// COPIED UNCHANGED from the v12 world (web/world/cmd-grammar.mjs) at v12 commit 3adcee9 (file last changed 0562d4f). Modular star family: public #20973 guard.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cmd-grammar.mjs: the typed design language of the site world. One line is one command; parse(line) turns it into
 // { verb, set: { key: value }, act, arg } or refuses it in words. Pure: no DOM; imports only its earthing words.

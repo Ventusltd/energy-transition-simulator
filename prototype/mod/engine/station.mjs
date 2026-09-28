@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/station.mjs at v12 commit 3adcee9 (file last changed e22776b). Modular star family: public #145809 tableShape.
+// COPIED UNCHANGED from the v12 world (web/world/station.mjs) at v12 commit 3adcee9 (file last changed e22776b). Modular star family: public #145809 tableShape.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // Solar station library: paired tables, pole inverters, DC home cables in ducts, AC trenches, 2 x 5 MVA.
 // The world draws it through block-build.mjs (Design > Solar block): placed on the measured ground, built in sequence.

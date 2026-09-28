@@ -1,15 +1,15 @@
 // node --test place-frame.test.mjs
 // Round trips to 1 mm at 20 points from 49 to 61 N and 5 overseas; MapLibre parity; the 100 m lattice;
-// the world's bng.mjs and OSTN15 (read-only, from E:/gw/v12/web/world). Consistency, not truth: the OSTN15
+// the world's bng.mjs and OSTN15 (read-only, from WORLD_DIR, else the copy in mod/engine). Consistency, not truth: the OSTN15
 // gap is printed alongside every GB result.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import * as P from './place-frame.mjs';
 
-const WORLD = 'E:/gw/v12/web/world';
+const WORLD = process.env.WORLD_DIR || fileURLToPath(new URL('./mod/engine', import.meta.url));
 const mm = 1e-3;
 const gap = (a, b) => { const p = P.ecef(a.lat, a.lon, 0), q = P.ecef(b.lat, b.lon, 0); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); };
 
@@ -93,9 +93,9 @@ test('the old overlay path against the exact one (information)', () => {
 
 test('GB: world bng.mjs round trips; OSTN15 where the data is present; gap to OSTN15 stated', async () => {
   const bng = await import(pathToFileURL(`${WORLD}/bng.mjs`).href);
-  const os = await import(pathToFileURL(`${WORLD}/ostn15.mjs`).href);
+  const os = existsSync(`${WORLD}/ostn15.mjs`) ? await import(pathToFileURL(`${WORLD}/ostn15.mjs`).href) : null; // OSTN15 lives in the world, not in this copy
   const dir = `${WORLD}/data/ostn15`, blocks = new Map();
-  if (existsSync(`${dir}/ostn15.json`)) {
+  if (os && existsSync(`${dir}/ostn15.json`)) {
     const raw = readFileSync(`${dir}/ostn15.json`);
     assert.equal(createHash('sha256').update(raw).digest('hex'), os.INDEX_SHA256);
     for (const r of JSON.parse(raw).blocks || []) {

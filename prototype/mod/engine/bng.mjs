@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/bng.mjs at v12 commit 3adcee9 (file last changed 04b1c72). Modular star family: public #144675 tmForward.
+// COPIED UNCHANGED from the v12 world (web/world/bng.mjs) at v12 commit 3adcee9 (file last changed 04b1c72). Modular star family: public #144675 tmForward.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // British National Grid <-> WGS84, pure functions, no imports, no DOM.
 //

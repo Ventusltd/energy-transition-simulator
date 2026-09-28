@@ -6,10 +6,11 @@ import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as P from './place-frame.mjs';
 
-const out = process.argv[2] || 'E:/swarm/coords/js-samples.json';
+const out = process.argv[2] || 'js-samples.json';
 let s = 20260927 >>> 0;
 const rnd = () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-const bng = await import(pathToFileURL('E:/gw/v12/web/world/bng.mjs').href);
+// WORLD_DIR points at the v12 world when the operator has it; otherwise the unchanged copy in mod/engine is used.
+const bng = process.env.WORLD_DIR ? await import(pathToFileURL(process.env.WORLD_DIR + '/bng.mjs').href) : await import('./mod/engine/bng.mjs');
 
 const COLS = ['lat', 'lon', 'h', 'key_j', 'key_i', 'anchor_lat', 'anchor_lon',
   'local_x', 'local_y', 'local_z', 'enu_x', 'enu_y', 'enu_z', 'back_lat', 'back_lon',

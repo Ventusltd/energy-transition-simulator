@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/block-build.mjs at v12 commit 3adcee9 (file last changed 604729d). Modular star family: public #146332 padEarthworks.
+// COPIED UNCHANGED from the v12 world (web/world/block-build.mjs) at v12 commit 3adcee9 (file last changed 604729d). Modular star family: public #146332 padEarthworks.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // block-build.mjs: the owner's 10 MVA solar block (station.mjs, ported from his explorer) placed on the measured
 // ground, with the 33 kV rings to the grid (block-mv.mjs), as line groups ordered for the build sequence.

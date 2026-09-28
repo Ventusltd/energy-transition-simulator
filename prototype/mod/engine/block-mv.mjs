@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/block-mv.mjs at v12 commit 3adcee9 (file last changed 256ecf8). Modular star family: public #146351 mvChain.
+// COPIED UNCHANGED from the v12 world (web/world/block-mv.mjs) at v12 commit 3adcee9 (file last changed 256ecf8). Modular star family: public #146351 mvChain.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // block-mv.mjs: stations of the solar block chained on 33 kV feeders to the MV board, the grid transformer(s) and the
 // connection, laid out and sized from the load. Plant frame: metres east (x) and north (y) of station 1's own

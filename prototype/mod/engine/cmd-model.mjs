@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cmd-model.mjs at v12 commit 3adcee9 (file last changed 0562d4f). Modular star family: public #148236 moduleOf.
+// COPIED UNCHANGED from the v12 world (web/world/cmd-model.mjs) at v12 commit 3adcee9 (file last changed 0562d4f). Modular star family: public #148236 moduleOf.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cmd-model.mjs: the design as typed. A session holds the typed values, runs each command through an engine (the page's
 // plant, block and layers, or a plain CPU layout in tests), echoes what changed in words, keeps an undo stack, and keeps

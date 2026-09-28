@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/plant-piles.mjs at v12 commit 3adcee9 (file last changed b484f9f). Modular star family: public #147944 planTables.
+// COPIED UNCHANGED from the v12 world (web/world/plant-piles.mjs) at v12 commit 3adcee9 (file last changed b484f9f). Modular star family: public #147944 planTables.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // plant-piles.mjs: the piles of every table of a laid-out plant (plant-layout.mjs), fixed tilt or single-axis tracker,
 // worked out automatically on the measured ground. Nobody places a pile: piles are an output of the tables.

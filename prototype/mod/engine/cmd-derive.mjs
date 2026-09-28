@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cmd-derive.mjs at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #147688 noonSun.
+// COPIED UNCHANGED from the v12 world (web/world/cmd-derive.mjs) at v12 commit 3adcee9 (file last changed 8903e78). Modular star family: public #147688 noonSun.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cmd-derive.mjs: the quantities a typed command changes, worked out from its inputs. Pure: no DOM.
 //   sun and shade    noon sun height at the solstices for the site latitude; the shadow a row casts on level ground

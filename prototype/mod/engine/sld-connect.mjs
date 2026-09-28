@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/sld-connect.mjs at v12 commit 3adcee9 (file last changed 219d82e). Modular star family: public #148022 kvForMW.
+// COPIED UNCHANGED from the v12 world (web/world/sld-connect.mjs) at v12 commit 3adcee9 (file last changed 219d82e). Modular star family: public #148022 kvForMW.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // sld-connect.mjs: which grid connection a plant gets, from its size and what is near it. Editable, illustrative rules;
 // the network operator decides the real connection. One connection object serves the solar block, the single-line

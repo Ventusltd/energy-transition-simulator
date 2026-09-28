@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/measure-format.mjs at v12 commit 3adcee9 (file last changed 85bfdb1). Modular star family: public #1608 formatNumber.
+// COPIED UNCHANGED from the v12 world (web/world/measure-format.mjs) at v12 commit 3adcee9 (file last changed 85bfdb1). Modular star family: public #1608 formatNumber.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // measure-format.mjs: plain British English lines from the numbers measure.mjs
 // returns. Pure: no imports, no DOM. Parts are joined with " · ", for example

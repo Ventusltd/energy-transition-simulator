@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/module-catalogue.mjs at v12 commit 3adcee9 (file last changed 48f2a65). Modular star family: public #147863 checkCatalogue.
+// COPIED UNCHANGED from the v12 world (web/world/module-catalogue.mjs) at v12 commit 3adcee9 (file last changed 48f2a65). Modular star family: public #147863 checkCatalogue.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // module-catalogue.mjs: the generic module catalogue (data/modules.json): schema check, the cell grid of a class,
 // the cold open-circuit voltage, and the string and table counts a class gives on a table face.

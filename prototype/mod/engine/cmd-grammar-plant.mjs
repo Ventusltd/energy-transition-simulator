@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cmd-grammar-plant.mjs at v12 commit 3adcee9 (file last changed a83209f). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/cmd-grammar-plant.mjs) at v12 commit 3adcee9 (file last changed a83209f). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cmd-grammar-plant.mjs: the typed words for the plant's inverter class, its packing and the study presets.
 //   inverter central 2500kva 2   central inverters of 2500 kVA, two to a station (MV skid or container)

@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cmd-trench.mjs at v12 commit 3adcee9 (file last changed 604729d). Modular star family: public #148279 trenchEnv.
+// COPIED UNCHANGED from the v12 world (web/world/cmd-trench.mjs) at v12 commit 3adcee9 (file last changed 604729d). Modular star family: public #148279 trenchEnv.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // cmd-trench.mjs: the command line's trench and cable words, as text. Pure: the numbers come from the rating cartridges.
 //   cable rate 400 al 28 circuits [pitch 0.25] [lv|mv|dc]   one group of circuits rated together, the BS 7671 433.1 overload

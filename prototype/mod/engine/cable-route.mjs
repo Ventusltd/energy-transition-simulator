@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/cable-route.mjs at v12 commit 3adcee9 (file last changed 04b1c72). Modular star family: public #144725 routeCable.
+// COPIED UNCHANGED from the v12 world (web/world/cable-route.mjs) at v12 commit 3adcee9 (file last changed 04b1c72). Modular star family: public #144725 routeCable.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // Cable route: a buried cable laid along a plan polyline. Pure: no imports, no DOM, no WebGL.
 // Local east (x), north (y), up (z), metres, as camera.mjs.

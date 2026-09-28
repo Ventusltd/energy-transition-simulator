@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/journey.mjs at v12 commit 3adcee9 (file last changed f0fe9c2). Modular star family: public #133195 cardText.
+// COPIED UNCHANGED from the v12 world (web/world/journey.mjs) at v12 commit 3adcee9 (file last changed f0fe9c2). Modular star family: public #133195 cardText.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // journey.mjs: the first step of the journey (owner direction 8): "go substation 132" goes to the nearest substation that
 // works at 132 kV (or 400, 275, 66, 33, 11) and stands you outside its real compound fence (the footprints, lib.compound),

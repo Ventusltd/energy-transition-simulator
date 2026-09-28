@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/lv-dc-sizing.mjs at v12 commit 3adcee9 (file last changed f52e11f). Modular star family: public #148457 rdc.
+// COPIED UNCHANGED from the v12 world (web/world/lv-dc-sizing.mjs) at v12 commit 3adcee9 (file last changed f52e11f). Modular star family: public #148457 rdc.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // lv-dc-sizing.mjs: LV AC and 1.5 kV DC PV cable sizing, with our own code and editable inputs.
 //

@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/plant-central.mjs at v12 commit 3adcee9 (file last changed a83209f). Modular star family: not known to star-find.
+// COPIED UNCHANGED from the v12 world (web/world/plant-central.mjs) at v12 commit 3adcee9 (file last changed a83209f). Modular star family: not known to star-find.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // plant-central.mjs: what a central-inverter plant adds to the drawing. Each central station (plant-template.mjs,
 // inverterClass 'central') is one container on its pad: the central inverters, the MV transformer and switchgear

@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/trench-plan.mjs at v12 commit 3adcee9 (file last changed a36f410). Modular star family: public #148717 sizeTrench.
+// COPIED UNCHANGED from the v12 world (web/world/trench-plan.mjs) at v12 commit 3adcee9 (file last changed a36f410). Modular star family: public #148717 sizeTrench.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // trench-plan.mjs: trenches sized by the rating of the cables in them, for the solar block and the plant feeders.
 //

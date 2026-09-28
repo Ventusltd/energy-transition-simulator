@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/structures.mjs at v12 commit 3adcee9 (file last changed f52e11f). Modular star family: public #148673 parseFormat.
+// COPIED UNCHANGED from the v12 world (web/world/structures.mjs) at v12 commit 3adcee9 (file last changed f52e11f). Modular star family: public #148673 parseFormat.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // structures.mjs: the mounting structures the typed bar can build, and the structure checks they raise. Pure: no DOM, no imports.
 //

@@ -1,4 +1,4 @@
-// COPIED UNCHANGED from E:/gw/v12/web/world/block-trenches.mjs at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: public #148126 stretches.
+// COPIED UNCHANGED from the v12 world (web/world/block-trenches.mjs) at v12 commit 3adcee9 (file last changed 9b1ffad). Modular star family: public #148126 stretches.
 // Do not edit here: change the source and re-copy. Everything below this header is byte-identical to the source.
 // block-trenches.mjs: the solar block's trenches, laid out from what each stretch of route really carries, then sized by
 // rating (trench-plan.mjs). One source of truth: the readout, the typed words, the X-ray and the bill of quantities all
