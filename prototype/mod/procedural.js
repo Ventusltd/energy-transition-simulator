@@ -87,20 +87,27 @@
 
     const segD = (px, py, ax, ay, bx, by) => { const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy,
       t = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L)) : 0; return Math.hypot(px - ax - t * dx, py - ay - t * dy); };
+    // Overhead lines (round r4): every GridAtlas line the page has ALREADY loaded (pylons-real holds the whole national files),
+    // never only the tiles in view, so a site's clearance does not change with pan or zoom. Only spans within the site's own
+    // reach (sqrt2*h + reachM + 50 m of the register point) count. Nothing fetched here. null = no line data loaded yet.
     function ohlNear(r, R) {                                    // real line spans within reach of the site box, in its local metres
-      const P = window.__pylonsReal; if (!P || !P.live || !P.towersOf) return [];
-      const a = PF.placeKey(r.lat, r.lon), off = PF.toLocal(a, r.lat, r.lon, 0), runs = new Set(), out = [];
-      for (const bk of P.live.values()) if (bk.t && bk.t.id) runs.add(bk.t.id.split(':').slice(0, 2).join(':'));
-      for (const id of runs) { const [kv, li] = id.split(':'), T = P.towersOf(kv, +li), reachM = Math.max(...P.KV[kv].arm) + GS6_M;
-        const pts = T.map(t => { const q = PF.toLocal(a, t.lat, t.lon, 0); return [q.x - off.x, q.y - off.y]; }), lim = Math.SQRT2 * R + reachM + 50;
-        for (let i = 1; i < pts.length; i++) if (segD(0, 0, ...pts[i - 1], ...pts[i]) < lim) out.push({ pts: [pts[i - 1], pts[i]], closed: false, reachM, kv }); }
+      const P = window.__pylonsReal; if (!P || !P.lines || !P.towersOf || !P.KV) return null;
+      const kvs = Object.keys(P.KV); if (!kvs.every(kv => Array.isArray(P.lines[kv]))) return null;
+      const a = PF.placeKey(r.lat, r.lon), off = PF.toLocal(a, r.lat, r.lon, 0), out = [], k = Math.cos(r.lat * Math.PI / 180);
+      for (const kv of kvs) { const reachM = Math.max(...P.KV[kv].arm) + GS6_M, lim = Math.SQRT2 * R + reachM + 50, dLa = (lim + 200) / 111320, dLo = dLa / k;
+        P.lines[kv].forEach((ln, li) => { const [w, s, e, n] = ln.bbox;
+          if (e < r.lon - dLo || w > r.lon + dLo || n < r.lat - dLa || s > r.lat + dLa) return;   // bbox far from the site: skip
+          const pts = P.towersOf(kv, li).map(t => { const q = PF.toLocal(a, t.lat, t.lon, 0); return [q.x - off.x, q.y - off.y]; });
+          for (let i = 1; i < pts.length; i++) if (segD(0, 0, ...pts[i - 1], ...pts[i]) < lim) out.push({ pts: [pts[i - 1], pts[i]], closed: false, reachM, kv }); }); }
       return out;                                               // one zone per span near the site, so far-away spans cost nothing
     }
+    const ohlSay = (ohl, what) => ohl === null ? 'no overhead line data loaded for this site box: clearance not applied'
+      : ohl.length ? what : 'no mapped overhead line within reach of this site box: nothing kept out';
     const crosses = (c, a, b) => { const ccw = (p, q, r) => (r[1] - p[1]) * (q[0] - p[0]) > (q[1] - p[1]) * (r[0] - p[0]);
       return c.some((p, i) => { const q = c[(i + 1) % 4]; return ccw(p, a, b) !== ccw(q, a, b) && ccw(p, q, a) !== ccw(p, q, b); }); };
     const rowDocs = () => { const R = window.SIM && window.SIM.scannerRows; return R && R.state && R.state.docs ? Object.values(R.state.docs) : []; };
-    const sig = () => { const P = window.__pylonsReal, s = new Set(); if (P && P.live) for (const bk of P.live.values()) if (bk.t && bk.t.id) s.add(bk.t.id.split(':').slice(0, 2).join(':'));
-      return [...s].sort().join(',') + '|rows' + rowDocs().length; };
+    const sig = () => { const P = window.__pylonsReal;          // redo when the national line files or row files arrive, never on camera moves
+      return 'lines' + (P && P.lines ? Object.keys(P.lines).filter(kv => Array.isArray(P.lines[kv])).sort().join(',') : '') + '|rows' + rowDocs().length; };
     // Row fit (round r3): the measured rows the page has ALREADY loaded (Scanner rows: the lab's row files, lon/lat runs from
     // imagery), never fetched here. Only runs whose midpoint lies inside THIS site's own square box (within h of the register
     // point, in PF.toLocal metres) count, so a site is never credited with a neighbour's rows and the fit does not depend on
@@ -128,7 +135,7 @@
     }
 
     async function solar(r) {                                   // the engine's generator, as plant.js runs it
-      // Rows fitted to the measured rows in view when there are any: rows within 45 deg of north-south use the engine's
+      // Rows fitted to the measured rows inside the site's own box when there are any: rows within 45 deg of north-south use the engine's
       // east-west (tent) layout, others its south layout; the residual angle turns the whole layout about the register point.
       const fr = fitRows(r), fit = fr.n ? fr : null, st = { ...CM.DEFAULTS, mw: r.mw };
       let rot = 0, pitchUsed = false;
@@ -137,14 +144,14 @@
           pitchUsed = st.layout === 'south' ? d.gcr > 0 && d.gcr <= 0.9 : d.ewGapM >= 0.5; if (pitchUsed) st.pitch = fit.pitchM; } }
       const env = { latDeg: r.lat, catalogue }, inp = CM.layoutInput(st, env);
       const h = halfSide(st, r.lat), side = 2 * h;
-      const ohl = ohlNear(r, h), th = rot * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+      const ohlR = ohlNear(r, h), ohl = ohlR || [], th = rot * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
       const turn = ([e, n], s = 1) => [e * cs + s * n * sn, -s * e * sn + n * cs];     // clockwise by rot (s = -1: back)
       const ohlL = ohl.map(z => ({ ...z, pts: z.pts.map(q => turn(q, -1)) }));        // the real spans, in the layout's own frame
       const res = await PL.layoutPlantAsync({ boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], targetMW: r.mw, layout: st.layout, template: inp.template,
         piles: false, groundAt: () => 0, grid: null, water: [], ohl: ohlL.length ? ohlL : null, options: { ...inp.options, slopeLimitPct: st.slope, fenceSetbackM: st.fence } });
       const Fr0 = res.frame, Fr = { en: (u, v) => turn(Fr0.en(u, v)) }, T = res.table, P = res.params, out = [], at = (u, v, z) => [...Fr.en(u, v), z], seg = (a, b) => out.push([...a, ...b]);
       const rowAz = ((st.layout === 'south' ? 90 : 0) + rot + 180) % 180;
-      const rowTag = fit ? `row azimuth ${rowAz.toFixed(1)} deg, pitch ${T.pitch.toFixed(2)} m, fitted to ${fit.n.toLocaleString('en-GB')} measured rows inside its own site box`
+      const rowTag = fit ? `row azimuth ${rowAz.toFixed(1)} deg, pitch ${T.pitch.toFixed(2)} m, fitted to ${fit.n.toLocaleString('en-GB')} measured rows inside a ${Math.round(2 * fit.boxHalfM).toLocaleString('en-GB')} m square around the register point`
         + (pitchUsed ? ' (pitch: the row file reading, estimated from imagery)' : ` (pitch: engine default, the row file's ${fit.pitchM ? fit.pitchM + ' m' : 'none'} did not fit the engine rule)`)
         : `south formula, not calibrated: row azimuth 90 deg, pitch ${T.pitch.toFixed(2)} m`;
       for (const fl of res.fields || [res.boundary]) for (let i = 0; i < fl.length; i++) seg(at(...fl[i], 1.5), at(...fl[(i + 1) % fl.length], 1.5));
@@ -157,17 +164,17 @@
       for (const s of res.stations) { const [e, n] = Fr.en(s.u, s.v); box(out, e - 6, n - 1.5, 12, 3, 0, 3); }
       const kept = (res.skipped && res.skipped.ohl) || 0, areaHa = side * side / 1e4, mwPerHa = r.mw / areaHa;
       const rowsV = [...new Set(Array.from({ length: t.length / 6 }, (_, i) => Math.round(t[6 * i + 1] * 1000) / 1000))].sort((a, b) => a - b);
-      return { lines: out, geom: { ohl, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
+      return { lines: out, geom: { ohl, ohlLoaded: ohlR !== null, ohlRadiusM: h, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
           formula: { pitchM: T.pitch, pitchTag: fit && pitchUsed ? 'row file reading, estimated from imagery' : CALIB.pitchTag, rowAzDeg: rowAz, layout: st.layout, fitN: fit ? fit.n : 0, fitBoxHalfM: fr.boxHalfM, fitAzDeg: fit ? fit.azDeg : null, rowTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
             boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], rowsV } },
         text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, ${rowTag}, `
           + `site box ${areaHa.toFixed(1)} ha = ${mwPerHa.toFixed(2)} MW/ha (${CALIB.mwPerHaTag}), ${res.built.stations} stations; `
-          + (ohl.length ? `${kept.toLocaleString('en-GB')} table positions kept out of overhead line zones (illustrative)` : 'no overhead line data in view: clearance not applied')
+          + ohlSay(ohlR, `${kept.toLocaleString('en-GB')} table positions kept out of overhead line zones (illustrative)`)
           + `; ${SQUARE}` };
     }
     function bess(r) {                                          // ASSUMED yard rule (see BESS above)
       const n = Math.max(1, Math.ceil(r.mw * BESS.hours / BESS.mwhPerUnit)), cols = Math.min(n, BESS.perRow), nr = Math.ceil(n / BESS.perRow);
-      const W = cols * BESS.w + (cols - 1) * BESS.gap, D = nr * BESS.d + (nr - 1) * BESS.aisle, out = [], ohl = ohlNear(r, Math.max(W, D) / 2 + BESS.fence);
+      const W = cols * BESS.w + (cols - 1) * BESS.gap, D = nr * BESS.d + (nr - 1) * BESS.aisle, out = [], ohlR = ohlNear(r, Math.max(W, D) / 2 + BESS.fence), ohl = ohlR || [];
       const margin = PL.LAYOUT_DEFAULTS.ohlMarginM, cont = [];  // the engine's own margin, so tables and containers keep the same clearance
       const near = c => ohl.some(z => { const [a, b] = z.pts, lim = z.reachM + margin;   // box within reach + margin of the span
         return c.some(p => segD(...p, ...a, ...b) < lim) || [a, b].some(p => Math.hypot(Math.max(c[0][0] - p[0], 0, p[0] - c[2][0]),
@@ -177,9 +184,9 @@
         const c = [[x, y], [x + BESS.w, y], [x + BESS.w, y + BESS.d], [x, y + BESS.d]];
         if (near(c)) { dropped++; continue; } cont.push(c); box(out, x, y, BESS.w, BESS.d, 0, BESS.h); }
       box(out, -W / 2 - BESS.fence, -D / 2 - BESS.fence, W + 2 * BESS.fence, D + 2 * BESS.fence, 0, 2.4);
-      return { lines: out, geom: { ohl, marginM: margin, tables: [], containers: cont, skipped: dropped },
+      return { lines: out, geom: { ohl, ohlLoaded: ohlR !== null, ohlRadiusM: Math.max(W, D) / 2 + BESS.fence, marginM: margin, tables: [], containers: cont, skipped: dropped },
         text: `${r.mw} MW storage: ${n - dropped} of ${n} containers (assumed 2 h, 3.7 MWh each); `
-          + (ohl.length ? `${dropped} container positions kept out of overhead line zones (illustrative)` : 'no overhead line data in view: clearance not applied') + `; ${SQUARE}` };
+          + ohlSay(ohlR, `${dropped} container positions kept out of overhead line zones (illustrative)`) + `; ${SQUARE}` };
     }
 
     async function refresh() {
@@ -213,6 +220,8 @@
     btn.id = 'procedural';
     map.on('moveend', refresh);
     window.__proceduralRefresh = refresh; window.__proceduralFit = ref => { const r = rows.find(x => x.ref === ref); return r ? fitRows(r) : null; }; window.__proceduralGhost = () => ghost.length;
+    window.__proceduralOhl = ref => { const r = rows.find(x => x.ref === ref), c = cache.get(ref); if (!r || !c) return null;   // fresh, not the cache
+      const o = ohlNear(r, c.geom.ohlRadiusM); return { loaded: o !== null, spans: o ? o.length : 0, key: o ? o.map(z => z.kv + ':' + z.pts.flat().map(v => v.toFixed(2)).join(',')).join('|') : '' }; };
   }
 
   (function wait() { if (window.SIM && window.__pf && window.__pf.PF) start(window.SIM, window.__pf.PF); else setTimeout(wait, 100); })();
