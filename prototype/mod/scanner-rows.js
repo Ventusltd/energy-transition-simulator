@@ -148,8 +148,9 @@
   }
   function init() {
     if (!window.SIM) return setTimeout(init, 200);
-    const b = window.SIM.addButton('Scanner rows', () => run(b));
-    window.SIM.scannerRows = Object.assign({ run: () => run(b), check, state }, api);
+    // Switched OFF (28 Sept): it drew the one scanned farm's rows from any location. The loader (check, state) stays
+    // for procedural's fit; there is no button, and run() draws nothing.
+    window.SIM.scannerRows = Object.assign({ run: async () => null, check, state }, api);
   }
   init();
 })();
