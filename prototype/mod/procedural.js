@@ -98,16 +98,48 @@
     }
     const crosses = (c, a, b) => { const ccw = (p, q, r) => (r[1] - p[1]) * (q[0] - p[0]) > (q[1] - p[1]) * (r[0] - p[0]);
       return c.some((p, i) => { const q = c[(i + 1) % 4]; return ccw(p, a, b) !== ccw(q, a, b) && ccw(p, q, a) !== ccw(p, q, b); }); };
-    const sig = () => { const P = window.__pylonsReal, s = new Set(); if (P && P.live) for (const bk of P.live.values()) if (bk.t && bk.t.id) s.add(bk.t.id.split(':').slice(0, 2).join(':')); return [...s].sort().join(','); };
+    const rowDocs = () => { const R = window.SIM && window.SIM.scannerRows; return R && R.state && R.state.docs ? Object.values(R.state.docs) : []; };
+    const sig = () => { const P = window.__pylonsReal, s = new Set(); if (P && P.live) for (const bk of P.live.values()) if (bk.t && bk.t.id) s.add(bk.t.id.split(':').slice(0, 2).join(':'));
+      return [...s].sort().join(',') + '|rows' + rowDocs().length; };
+    // Row fit (round r2): the measured rows the page has ALREADY loaded (Scanner rows: the lab's row files, lon/lat runs from
+    // imagery), never fetched here. Runs whose midpoint is in the view give the row azimuth (axial median, compass degrees
+    // 0-180); the pitch is the row file's own pitch reading. Nothing in view: null, and the south formula stays.
+    const wrap90 = d => ((d % 180) + 270) % 180 - 90;           // to (-90, 90]
+    function fitRows(r) {
+      const b = map.getBounds(), a = PF.placeKey(r.lat, r.lon), az = [], pitches = [];
+      for (const doc of rowDocs()) { let n0 = 0;
+        for (const [[lo0, la0], [lo1, la1]] of doc.rows || []) { const la = (la0 + la1) / 2, lo = (lo0 + lo1) / 2;
+          if (la < b.getSouth() || la > b.getNorth() || lo < b.getWest() || lo > b.getEast()) continue;
+          const A = PF.toLocal(a, la0, lo0, 0), B = PF.toLocal(a, la1, lo1, 0); az.push(Math.atan2(B.x - A.x, B.y - A.y) * 180 / Math.PI); n0++; }
+        if (n0 && doc.row_pitch_m > 0) pitches.push(doc.row_pitch_m); }
+      if (!az.length) return null;
+      let sx = 0, sy = 0; for (const d of az) { sx += Math.cos(d * Math.PI / 90); sy += Math.sin(d * Math.PI / 90); }
+      const c = Math.atan2(sy, sx) * 90 / Math.PI, dev = az.map(d => wrap90(d - c)).sort((p, q) => p - q);
+      pitches.sort((p, q) => p - q);
+      return { azDeg: ((c + dev[dev.length >> 1]) % 180 + 180) % 180, pitchM: pitches.length ? pitches[pitches.length >> 1] : null, n: az.length };
+    }
 
     async function solar(r) {                                   // the engine's generator, as plant.js runs it
-      const st = { ...CM.DEFAULTS, mw: r.mw }, env = { latDeg: r.lat, catalogue }, inp = CM.layoutInput(st, env);
+      // Rows fitted to the measured rows in view when there are any: rows within 45 deg of north-south use the engine's
+      // east-west (tent) layout, others its south layout; the residual angle turns the whole layout about the register point.
+      const fit = fitRows(r), st = { ...CM.DEFAULTS, mw: r.mw };
+      let rot = 0, pitchUsed = false;
+      if (fit) { st.layout = Math.abs(wrap90(fit.azDeg)) <= 45 ? 'east-west' : 'south'; rot = wrap90(fit.azDeg - (st.layout === 'south' ? 90 : 0));
+        if (fit.pitchM) { const d = CM.derive({ ...st, pitch: fit.pitchM }, { catalogue });   // the engine's own pitch rule, kept only if it fits
+          pitchUsed = st.layout === 'south' ? d.gcr > 0 && d.gcr <= 0.9 : d.ewGapM >= 0.5; if (pitchUsed) st.pitch = fit.pitchM; } }
+      const env = { latDeg: r.lat, catalogue }, inp = CM.layoutInput(st, env);
       const tpl = CM.derive(st, { catalogue }).tpl, ld = { ...PL.LAYOUT_DEFAULTS, ...(inp.options || {}) }, T0 = PL.tableGeometry(st.layout, ld, tpl);
       const side = Math.sqrt(Math.ceil(tpl.counts.strings / 2) * T0.pitch * (T0.lenU + PL.LAYOUT_DEFAULTS.tableGapM) * 1.5) + 2 * st.fence, h = side / 2;
-      const ohl = ohlNear(r, h);
+      const ohl = ohlNear(r, h), th = rot * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+      const turn = ([e, n], s = 1) => [e * cs + s * n * sn, -s * e * sn + n * cs];     // clockwise by rot (s = -1: back)
+      const ohlL = ohl.map(z => ({ ...z, pts: z.pts.map(q => turn(q, -1)) }));        // the real spans, in the layout's own frame
       const res = await PL.layoutPlantAsync({ boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], targetMW: r.mw, layout: st.layout, template: inp.template,
-        piles: false, groundAt: () => 0, grid: null, water: [], ohl: ohl.length ? ohl : null, options: { ...inp.options, slopeLimitPct: st.slope, fenceSetbackM: st.fence } });
-      const Fr = res.frame, T = res.table, P = res.params, out = [], at = (u, v, z) => [...Fr.en(u, v), z], seg = (a, b) => out.push([...a, ...b]);
+        piles: false, groundAt: () => 0, grid: null, water: [], ohl: ohlL.length ? ohlL : null, options: { ...inp.options, slopeLimitPct: st.slope, fenceSetbackM: st.fence } });
+      const Fr0 = res.frame, Fr = { en: (u, v) => turn(Fr0.en(u, v)) }, T = res.table, P = res.params, out = [], at = (u, v, z) => [...Fr.en(u, v), z], seg = (a, b) => out.push([...a, ...b]);
+      const rowAz = ((st.layout === 'south' ? 90 : 0) + rot + 180) % 180;
+      const rowTag = fit ? `row azimuth ${rowAz.toFixed(1)} deg, pitch ${T.pitch.toFixed(2)} m, fitted to ${fit.n.toLocaleString('en-GB')} measured rows in view`
+        + (pitchUsed ? ' (pitch: the row file reading, estimated from imagery)' : ` (pitch: engine default, the row file's ${fit.pitchM ? fit.pitchM + ' m' : 'none'} did not fit the engine rule)`)
+        : `south formula, not calibrated: row azimuth 90 deg, pitch ${T.pitch.toFixed(2)} m`;
       for (const fl of res.fields || [res.boundary]) for (let i = 0; i < fl.length; i++) seg(at(...fl[i], 1.5), at(...fl[(i + 1) % fl.length], 1.5));
       const lo = P.lowEdgeM, hi = lo + T.rise, t = res.tables;
       for (let q = 0; q < t.length; q += 6) { const ua = t[q], va = t[q + 1], ub = ua + (res.tableLen?.[q / 6] ?? T.lenU), vb = va + T.depth;
@@ -119,9 +151,9 @@
       const kept = (res.skipped && res.skipped.ohl) || 0, areaHa = side * side / 1e4, mwPerHa = r.mw / areaHa;
       const rowsV = [...new Set(Array.from({ length: t.length / 6 }, (_, i) => Math.round(t[6 * i + 1] * 1000) / 1000))].sort((a, b) => a - b);
       return { lines: out, geom: { ohl, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
-          formula: { pitchM: T.pitch, pitchTag: CALIB.pitchTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
+          formula: { pitchM: T.pitch, pitchTag: fit && pitchUsed ? 'row file reading, estimated from imagery' : CALIB.pitchTag, rowAzDeg: rowAz, layout: st.layout, fitN: fit ? fit.n : 0, fitAzDeg: fit ? fit.azDeg : null, rowTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
             boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], rowsV } },
-        text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, south rows at pitch ${T.pitch.toFixed(2)} m (${CALIB.pitchTag}), `
+        text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, ${rowTag}, `
           + `site box ${areaHa.toFixed(1)} ha = ${mwPerHa.toFixed(2)} MW/ha (${CALIB.mwPerHaTag}), ${res.built.stations} stations; `
           + (ohl.length ? `${kept.toLocaleString('en-GB')} table positions kept out of overhead line zones (illustrative)` : 'no overhead line data in view: clearance not applied')
           + `; ${SQUARE}` };

@@ -35,8 +35,12 @@ async function browser() {
   const farm = s1 && s1.shown.find(x => x.ref === 6502);
   check('solar farm at REPD 6502 drawn', farm && farm.segments > 1000, JSON.stringify(farm && { mw: farm.mw, segments: farm.segments, text: farm.text }));
   check('anchored at the register point', farm && farm.lat === 51.33877 && farm.lon === 0.91388, farm && `${farm.lat}, ${farm.lon}`);
-  // Wait for pylons-real's lines to reach the layout (it loads them async; procedural redoes the site when they arrive).
-  let s1b = s1; for (let t = 0; t < 60 && !(s1b && s1b.shown.some(x => x.ref === 6502 && x.geom.ohl.length)); t++) { await p.waitForTimeout(1000);
+  check('6502 before any rows are loaded: south formula, tagged not calibrated', farm && farm.geom.formula.fitN === 0 && farm.geom.formula.rowAzDeg === 90 && /south formula, not calibrated/.test(farm.text),
+    farm && `${farm.geom.formula.layout}, az ${farm.geom.formula.rowAzDeg}: ${farm.text.slice(0, 160)}`);
+  // Load the measured rows the page offers (Scanner rows: the lab's row file), so the formula can fit to them.
+  await p.evaluate(() => window.SIM.scannerRows.run()); await p.waitForTimeout(1500);
+  // Wait for pylons-real's lines and the row fit to reach the layout (both load async; procedural redoes the site when they arrive).
+  let s1b = s1; for (let t = 0; t < 90 && !(s1b && s1b.shown.some(x => x.ref === 6502 && x.geom.ohl.length && x.geom.formula.fitN > 0)); t++) { await p.waitForTimeout(1000);
     await p.evaluate(() => window.__proceduralRefresh && window.__proceduralRefresh()); s1b = await state(); }
   // Clearance: no table corner within reachM + the engine's margin of any real line span (distances in the site's local metres).
   const clr = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); if (!f) return null; const g = f.geom;
@@ -65,6 +69,21 @@ async function browser() {
   check('site box area equals MW divided by the published MW/ha within 1%', fm && Math.abs(shoe - fm.mw / fm.mwPerHa) / shoe < 0.01,
     fm && `boundary ${shoe.toFixed(2)} ha; ${fm.mw} MW / ${fm.mwPerHa.toFixed(3)} MW/ha = ${(fm.mw / fm.mwPerHa).toFixed(2)} ha (${fm.mwPerHaTag})`);
   console.log('FORMULA 6502', JSON.stringify(fm && { pitchM: fm.pitchM, areaHa: fm.areaHa, mwPerHa: fm.mwPerHa, N: fm.N, rows: fm.rowsV.length, drawnPitch }));
+  // Row azimuth: drawn (from the table corners the layout placed) against the median of the measured rows in view,
+  // each read here on its own from the row file's lon/lat (not from the module's fit).
+  const az = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); if (!f) return null;
+    const ax = d => ((d % 180) + 180) % 180, med = a => a.sort((p, q) => p - q)[a.length >> 1];
+    const drawn = med(f.geom.tables.map(([a, b]) => ax(Math.atan2(b[0] - a[0], b[1] - a[1]) * 180 / Math.PI)));
+    const B = window.SIM.map.getBounds(), k = Math.cos(f.lat * Math.PI / 180), m = [];
+    for (const doc of Object.values(window.SIM.scannerRows.state.docs)) for (const [[lo0, la0], [lo1, la1]] of doc.rows) {
+      const la = (la0 + la1) / 2, lo = (lo0 + lo1) / 2; if (la < B.getSouth() || la > B.getNorth() || lo < B.getWest() || lo > B.getEast()) continue;
+      m.push(ax(Math.atan2((lo1 - lo0) * k, la1 - la0) * 180 / Math.PI)); }
+    const meas = med(m), diff = Math.abs(((drawn - meas) % 180 + 270) % 180 - 90);
+    return { drawn: +drawn.toFixed(2), measured: +meas.toFixed(2), n: m.length, diff: +diff.toFixed(2), rowTag: f.geom.formula.rowTag, layout: f.geom.formula.layout }; });
+  check('6502: drawn row azimuth within 5 deg of the median measured row azimuth in view', az && az.n > 0 && az.diff <= 5 && /fitted to [\d,]+ measured rows in view/.test(az.rowTag), JSON.stringify(az));
+  console.log('AZIMUTH 6502', JSON.stringify(az));
+  await p.evaluate(() => { window.SIM.removeWhere(b => b.scannerRows); window.SIM.map.jumpTo({ center: [0.91388, 51.33877], zoom: 15, pitch: 0, bearing: 0 }); });
+  await p.waitForTimeout(4000);
   await shot('1-solar-top');
   await p.click('#wire'); await p.waitForTimeout(2500); await shot('2-solar-wire');
   await p.click('#walk'); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('3-solar-walk');
@@ -80,7 +99,13 @@ async function browser() {
   check('storage: clearance stated', cb && (cb.spans ? /container positions kept out/.test(cb.text) : /no overhead line data in view: clearance not applied/.test(cb.text)), JSON.stringify(cb));
   await p.click('#walk'); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('6a-bess-walk');
   await p.click('#drone'); await p.waitForTimeout(3000); await shot('6-bess-fly');
-  // 3. Switching off removes every procedural block.
+  // 3. A register solar site with no measured rows loaded (REPD 1335, 49.6 MW): the south formula, said so.
+  await p.goto(`${base}?lat=51.37343&lon=-2.08967&zoom=15`, { waitUntil: 'load' }); await p.waitForTimeout(8000);
+  await p.$eval('#procedural', x => x.click()); const s3 = await waitDrawn(60000);
+  const nr = s3 && s3.shown.find(x => x.ref === 1335);
+  check('solar site with no measured rows: south formula, row azimuth 90, tagged not calibrated', nr && nr.geom.formula.fitN === 0 && nr.geom.formula.layout === 'south' && nr.geom.formula.rowAzDeg === 90 && /south formula, not calibrated/.test(nr.text),
+    JSON.stringify(nr && { layout: nr.geom.formula.layout, az: nr.geom.formula.rowAzDeg, text: nr.text.slice(0, 160) }));
+  // 4. Switching off removes every procedural block.
   await p.$eval('#procedural', x => x.click()); await p.waitForTimeout(500);
   check('off removes the blocks', await p.evaluate(() => !window.SIM.blocks.some(x => x.procedural) && window.__proceduralGhost() === 0 && document.getElementById('procedural-caption').style.display === 'none'), 'no procedural blocks left, caption hidden');
   check('no page errors', errs.length === 0, errs.join(' | ') || 'none');
