@@ -82,11 +82,11 @@
     for (const p of c.ports) for (const cl of p.clear) if (cl != null && cl < pp.Ls + pp.R - 1e-9) { entryFlags++; entryBy[p.si] = (entryBy[p.si] || 0) + 1; }
     return { c, pp, E, km, widest, faults, bendFlags, bendBy, entryFlags, entryBy };
   }
-  function holesOf(d, c) {   // hole / port positions for a case: evenly spread along the wall, one per duct (A) or circuit (B)
+  function holesOf(d, c) {   // hole / port positions for a case: evenly spread along the wall (or over its clear stretches, ports.t), one per duct (A) or circuit (B)
     const out = [];
     for (const p of c.ports) {
       const B = d.bunds[p.si], w = B.walls.find(x => x.side === p.side); if (!w) continue;
-      for (let h = 0; h < p.nh; h++) { const t = (h + 0.5) / p.nh; out.push({ si: p.si, side: p.side, i: h + 1, nh: p.nh, en: [w.p0[0] + (w.p1[0] - w.p0[0]) * t, w.p0[1] + (w.p1[1] - w.p0[1]) * t], out: w.out, clear: p.clear[h] }); }
+      for (let h = 0; h < p.nh; h++) { const t = p.t && p.t[h] != null ? p.t[h] : (h + 0.5) / p.nh; out.push({ si: p.si, side: p.side, i: h + 1, nh: p.nh, en: [w.p0[0] + (w.p1[0] - w.p0[0]) * t, w.p0[1] + (w.p1[1] - w.p0[1]) * t], out: w.out, clear: p.clear[h] }); }
     }
     return out;
   }
@@ -351,12 +351,12 @@
   function table() {
     if (!doc) return; const ev = evaluate(doc, inst, sides), c = ev.c;
     const rx = s => { const f = (m, n) => `${m} m (${n})`, bad = s.rows_crossed || s.rows_crossed_entry; return `<td${bad ? ' style="background:' + FAULT + '"' : ''}>${f(s.rows_crossed_m, s.rows_crossed)} / ${f(s.rows_crossed_entry_m, s.rows_crossed_entry)}</td>`; };
-    const rows = c.stations.map(s => `<tr><td>${s.id}</td><td>${doc.bunds[s.si].cls}</td><td>${Object.entries(s.sides).map(([k, v]) => k + v).join(' ')}</td><td>${s.trench_km}</td><td>${s.widest_n} / ${s.widest_w} m${s.widest_L > 1 ? ' (' + s.widest_L + ' layers)' : ''}</td><td>${ev.bendBy[s.si] || 0}</td><td>${ev.entryBy[s.si] || 0}</td>${rx(s)}<td>${(s.seam_img_runs || []).length}</td><td>${s.env_rows_m2}</td><td>${s.d_track_med}</td><td>${s.row_clear_med}</td><td>${s.road_crossings} / ${s.true_crossings}</td><td>${s.routes}${s.unreachable ? ' (' + s.unreachable + ' unreached)' : ''}</td></tr>`).join('');
-    const T = c.totals, tot = `<tr style="font-weight:bold"><td>all</td><td></td><td></td><td>${T.trench_km}</td><td>${T.widest.station}: ${T.widest.n} / ${T.widest.w} m</td><td>${ev.bendFlags.length}</td><td>${ev.entryFlags}</td>${rx(T)}<td>${T.seam_img_runs}</td><td>${T.env_rows_m2}</td><td></td><td></td><td>${T.road_crossings} / ${T.true_crossings}</td><td>${T.routes}${T.unreachable ? ' (' + T.unreachable + ' unreached)' : ''}</td></tr>`;
-    showBox(`<b>Per station, ${inst}${sides} (live bend flags at R = ${ev.pp.R.toFixed(3)} m; the rest computed at the default radius)</b><table style="border-collapse:collapse;font:11px monospace" border="1"><tr><th>st</th><th>class</th><th>holes per side</th><th>trench km</th><th>widest</th><th>bend flags</th><th>entry flags</th><th>rows crossed: chains / entry legs (m, count; closed table mask)</th><th>chain runs &gt;= 1.5 m inside visible panel</th><th>envelope over rows m2</th><th>to track m (median)</th><th>clear of rows m (median)</th><th>track contacts / true crossings</th><th>routes</th></tr>${rows}${tot}</table><div style="font:11px sans-serif;max-width:900px">Rows crossed: runs over 1 m of centreline inside the closed table mask (rows, table-end blobs and the seams between them); shorter runs are corner clips of the 0.5 m raster. Track contacts: places where a chain meets the track mask (crossings or edge grazes; the track mask is good to +/-2-6 m). True crossings: the chain enters and leaves on opposite sides of the track line; crossings are ducted.</div>`);
+    const rows = c.stations.map(s => `<tr><td>${s.id}</td><td>${doc.bunds[s.si].cls}</td><td>${Object.entries(s.sides).map(([k, v]) => k + v).join(' ')}</td><td>${s.trench_km}</td><td>${s.widest_n} / ${s.widest_w} m${s.widest_L > 1 ? ' (' + s.widest_L + ' layers)' : ''}</td><td>${ev.bendBy[s.si] || 0}</td><td>${ev.entryBy[s.si] || 0}</td>${rx(s)}<td>${(s.seam_img_runs || []).length}</td><td${(s.panel_runs || []).length || (s.dark_runs || []).length ? ' style="background:' + FAULT + '"' : ''}>${(s.panel_runs || []).length} / ${(s.dark_runs || []).length}</td><td>${s.env_rows_m2}</td><td>${s.d_track_med}</td><td>${s.row_clear_med}</td><td>${s.road_crossings} / ${s.true_crossings}</td><td>${s.routes}${s.unreachable ? ' (' + s.unreachable + ' unreached)' : ''}</td></tr>`).join('');
+    const T = c.totals, tot = `<tr style="font-weight:bold"><td>all</td><td></td><td></td><td>${T.trench_km}</td><td>${T.widest.station}: ${T.widest.n} / ${T.widest.w} m</td><td>${ev.bendFlags.length}</td><td>${ev.entryFlags}</td>${rx(T)}<td>${T.seam_img_runs}</td><td>${T.panel_runs || 0} (${T.panel_m || 0} m) / ${T.dark_runs || 0} (${T.dark_m || 0} m)</td><td>${T.env_rows_m2}</td><td></td><td></td><td>${T.road_crossings} / ${T.true_crossings}</td><td>${T.routes}${T.unreachable ? ' (' + T.unreachable + ' unreached)' : ''}</td></tr>`;
+    showBox(`<b>Per station, ${inst}${sides} (live bend flags at R = ${ev.pp.R.toFixed(3)} m; the rest computed at the default radius)</b><table style="border-collapse:collapse;font:11px monospace" border="1"><tr><th>st</th><th>class</th><th>holes per side</th><th>trench km</th><th>widest</th><th>bend flags</th><th>entry flags</th><th>rows crossed: chains / entry legs (m, count; closed table mask)</th><th>chain runs &gt;= 1.5 m inside visible panel</th><th>chain runs on unmasked ground: panel-coloured &gt;= 2 m / dark non-green &gt; 1 m</th><th>envelope over rows m2</th><th>to track m (median)</th><th>clear of rows m (median)</th><th>track contacts / true crossings</th><th>routes</th></tr>${rows}${tot}</table><div style="font:11px sans-serif;max-width:900px">Rows crossed: runs over 1 m of centreline inside the closed table mask (rows, table-end blobs and the seams between them); shorter runs are corner clips of the 0.5 m raster. Unmasked ground: imagery cells outside the table mask and off the carved breaks that are panel-coloured (dark, blue-leaning) or dark and not green; the runs are listed per station in the data file and drawn in the fault colour. Track contacts: places where a chain meets the track mask (crossings or edge grazes; the track mask is good to +/-2-6 m). True crossings: the chain enters and leaves on opposite sides of the track line; crossings are ducted.</div>`); box.dataset.kind = 'table';
   }
   let box = null;
-  function showBox(html) { if (!box) { box = document.createElement('div'); box.id = 'act-box'; box.style.cssText = 'position:absolute;left:8px;top:120px;z-index:8;background:rgba(10,14,18,.95);color:#dfe;padding:6px;border:1px solid #456;border-radius:6px;max-height:70vh;max-width:96vw;overflow:auto;font:12px sans-serif'; document.body.appendChild(box); } box.innerHTML = '<button id="act-box-x" style="float:right">close</button>' + html; box.style.display = 'block'; box.querySelector('#act-box-x').onclick = () => { box.style.display = 'none'; }; }
+  function showBox(html) { if (!box) { box = document.createElement('div'); box.id = 'act-box'; box.style.cssText = 'position:absolute;left:8px;top:120px;z-index:8;background:rgba(10,14,18,.95);color:#dfe;padding:6px;border:1px solid #456;border-radius:6px;max-height:70vh;max-width:96vw;overflow:auto;font:12px sans-serif'; document.body.appendChild(box); } box.dataset.kind = ''; box.innerHTML = '<button id="act-box-x" style="float:right">close</button>' + html; box.style.display = 'block'; box.querySelector('#act-box-x').onclick = () => { box.style.display = 'none'; }; }
 
   const unitOf = n => inst === 'A' ? (n === 1 ? 'duct' : 'ducts') : (n === 1 ? 'circuit' : 'circuits');
   function rowsLine(T) {   // shown whenever it is not 0 (closed table mask: rows, table-end blobs and the seams between them)
@@ -364,7 +364,11 @@
     if (T.rows_crossed) a.push(`${T.rows_crossed} trench chains (${T.rows_crossed_m} m) at ${T.rows_crossed_stations} stations`);
     if (T.rows_crossed_entry) a.push(`${T.rows_crossed_entry} entry legs (${T.rows_crossed_entry_m} m) at ${T.entry_crossed_stations} stations`);
     if (T.seam_img_runs) a.push(`${T.seam_img_runs} chain runs (${T.seam_img_m} m) 1.5 m or more inside visible panel`);
-    return a.length ? `ROWS CROSSED: ${a.join('; ')} (magenta). ` : 'Rows crossed: 0 (closed table mask). ';
+    const b = [];   // fix round 2: chain runs on imagery that looks like panel but is not in the table mask (not proven clear)
+    if (T.panel_runs) b.push(`${T.panel_runs} chain runs of 2 m or more (${T.panel_m} m) on unmasked panel-coloured ground at ${T.panel_stations} stations`);
+    if (T.dark_runs) b.push(`${T.dark_runs} chain runs over 1 m (${T.dark_m} m) on unmasked dark non-green ground at ${T.dark_stations} stations`);
+    return (a.length ? `ROWS CROSSED: ${a.join('; ')} (magenta). ` : 'Rows crossed: 0 (closed table mask). ') +
+      (b.length ? `NOT PROVEN CLEAR: ${b.join('; ')} (magenta). ` : 'Chain runs on unmasked panel-coloured or dark ground: 0. ');
   }
   function info(extra) {
     if (!doc) return; const ev = evaluate(doc, inst, sides), pp = ev.pp, I = doc.installations[inst], T = ev.c.totals;
@@ -381,6 +385,7 @@
     try { walking = !!(window.walkFps && window.walkFps.state().on); } catch (e) { walking = false; }   // walk-fps can throw before DEM tiles exist
     if (S.map.getLayer('act-trench') && !walking) { fillOpacity = 0.72; S.map.setPaintProperty('act-trench', 'fill-opacity', fillOpacity); }
     addPlan(S.map); ensureWire(S.map);
+    if (box && box.style.display === 'block' && box.dataset.kind === 'table') table();   // an open per-station table follows the selected case
     const PF = S.PF || (window.__pf && window.__pf.PF); let n = null;
     try { n = station3D(S, PF, focusIdx(), anim && !anim.done ? anim.t : 1); } catch (e) { info('3D not drawn: ' + e.message); }
     if (!anim || anim.done) setCaption(''); syncPanel(); info(); return n;

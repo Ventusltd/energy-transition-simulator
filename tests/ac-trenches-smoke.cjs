@@ -106,11 +106,22 @@ check('partial(): 75 % of a 20 m polyline ends 5 m up the second leg', pt.length
   const OWN = /\bowner\b/i;
   check('privacy: no "owner" in the real data file, the fixture or the module source', !OWN.test(realText) && !OWN.test(fs.readFileSync(path.join(__dirname, 'fixtures', 'ac-trenches-fixture.json'), 'utf8')) && !OWN.test(fs.readFileSync(path.join(MOD, 'ac-trenches.js'), 'utf8')), 'scan');
   const rc = Object.entries(real.cases).map(([k, c]) => { const T = c.totals, list = c.stations.flatMap(s => s.tab_runs || []);
-    return { k, T, lc: list.filter(r => r[2] === 'c').length, la: list.filter(r => r[2] === 'a').length, img: c.stations.reduce((t, s) => t + (s.seam_img_runs || []).length, 0) }; });
+    return { k, T, lc: list.filter(r => r[2] === 'c').length, la: list.filter(r => r[2] === 'a').length, img: c.stations.reduce((t, s) => t + (s.seam_img_runs || []).length, 0), pan: c.stations.flatMap(s => s.panel_runs || []), dng: c.stations.flatMap(s => s.dark_runs || []) }; });
   check('closed table mask: chain runs > 1 m are 0, or every one is listed per station', rc.every(r => r.T.rows_crossed === r.lc && r.T.rows_crossed_entry === r.la), rc.map(r => `${r.k} ${r.T.rows_crossed}/${r.lc} ${r.T.rows_crossed_entry}/${r.la}`).join(' '));
   check('imagery test: chain runs >= 1.5 m inside visible panel are 0, or listed per station', rc.every(r => r.T.seam_img_runs === r.img), rc.map(r => `${r.k} ${r.T.seam_img_runs}`).join(' '));
   check('rows crossed on screen = JSON centre_rows_m less the corner clips (chains + entry legs), every case', rc.every(r => Math.abs(r.T.centre_rows_m - r.T.clip_m - r.T.rows_crossed_m - r.T.rows_crossed_entry_m) < 0.15), rc.map(r => `${r.k} ${r.T.centre_rows_m}-${r.T.clip_m}=${r.T.rows_crossed_m}+${r.T.rows_crossed_entry_m}`).join(' '));
-  const offend = rc.map(r => { const e = A.evaluate(real, r.k[0], r.k[1]).E.filter(x => x.rowx); return { k: r.k, n: e.length, ok: e.every(x => x.fault), need: r.T.rows_crossed + r.T.rows_crossed_entry + r.T.seam_img_runs }; });
+  // ---- FIX ROUND 2 (witnesses v2, re-check r1) ----
+  check('unmasked panel-coloured ground: chain runs >= 2 m are 0, or listed per station and the list equals the count, every case', rc.every(r => typeof r.T.panel_runs === 'number' && r.T.panel_runs === r.pan.length && r.pan.every(x => x[2] >= 2 - 1e-9) && Math.abs(r.T.panel_m - r.pan.reduce((t, x) => t + x[2], 0)) < 0.05), rc.map(r => `${r.k} ${r.T.panel_runs}/${r.pan.length}`).join(' '));
+  check('unmasked dark non-green ground: chain runs > 1 m are 0, or listed per station and the list equals the count, every case', rc.every(r => typeof r.T.dark_runs === 'number' && r.T.dark_runs === r.dng.length && r.dng.every(x => x[2] > 1) && Math.abs(r.T.dark_m - r.dng.reduce((t, x) => t + x[2], 0)) < 0.05), rc.map(r => `${r.k} ${r.T.dark_runs}/${r.dng.length}`).join(' '));
+  const hb = [];
+  for (const [k, c] of Object.entries(real.cases)) for (const p of c.ports) {
+    const w = real.bunds[p.si].walls.find(x => x.side === p.side), t = p.t || [];
+    if (t.length !== p.nh || t.some((x, i) => !(x > 0 && x < 1) || (i && (x - t[i - 1]) * w.len < 0.3 - 1e-6))) hb.push(`${k} ${real.bunds[p.si].id}${p.side}`);
+  }
+  check('holes: ports.t gives every hole inside its wall, in order, at least 0.30 m apart', hb.length === 0, hb.slice(0, 4).join('; ') || 'all ports');
+  const moved = real.cases.A4.ports.find(p => p.t.some((x, h) => Math.abs(x - (h + 0.5) / p.nh) > 1e-4));
+  check('holes drawn at ports.t (holesOf follows the data file where the holes are not evenly spread)', !moved || (() => { const w = real.bunds[moved.si].walls.find(x => x.side === moved.side), H = A.holesOf ? A.holesOf(real, real.cases.A4).find(h => h.si === moved.si && h.side === moved.side && h.i === 1) : null; return H && Math.abs(H.en[0] - (w.p0[0] + (w.p1[0] - w.p0[0]) * moved.t[0])) < 1e-6; })(), moved ? `${real.bunds[moved.si].id}${moved.side}` : 'no moved holes');
+  const offend = rc.map(r => { const e = A.evaluate(real, r.k[0], r.k[1]).E.filter(x => x.rowx); return { k: r.k, n: e.length, ok: e.every(x => x.fault), need: r.T.rows_crossed + r.T.rows_crossed_entry + r.T.seam_img_runs + r.T.panel_runs + r.T.dark_runs }; });
   check('every row-crossing edge is drawn in the fault colour (and there is one wherever the JSON counts one)', offend.every(o => o.ok && (o.need === 0 || o.n > 0)), offend.map(o => `${o.k} ${o.n}`).join(' '));
   const bl = rc.map(r => ({ k: r.k, live: A.evaluate(real, r.k[0], r.k[1]).bendFlags.length, json: r.T.bend_flags }));
   check('live bend count at defaults equals the table, every case', bl.every(b => b.live === b.json), bl.map(b => `${b.k} ${b.live}/${b.json}`).join(' '));
@@ -124,6 +135,8 @@ check('partial(): 75 % of a 20 m polyline ends 5 m up the second leg', pt.length
   await A.select('A', '4');
   const T4 = real.cases.A4.totals, want = T4.rows_crossed_entry ? `${T4.rows_crossed_entry} entry legs (${T4.rows_crossed_entry_m} m) at ${T4.entry_crossed_stations} stations` : 'Rows crossed: 0';
   check('info line A4 carries the rows-crossed line from the JSON', infoText.includes(want) && !OWN.test(infoText), want);
+  const want2 = T4.panel_runs || T4.dark_runs ? 'NOT PROVEN CLEAR: ' + [T4.panel_runs ? `${T4.panel_runs} chain runs of 2 m or more (${T4.panel_m} m) on unmasked panel-coloured ground at ${T4.panel_stations} stations` : '', T4.dark_runs ? `${T4.dark_runs} chain runs over 1 m (${T4.dark_m} m) on unmasked dark non-green ground at ${T4.dark_stations} stations` : ''].filter(Boolean).join('; ') : 'Chain runs on unmasked panel-coloured or dark ground: 0';
+  check('info line A4 carries the unmasked-ground runs from the JSON whenever they are not 0', infoText.includes(want2), want2);
   check('info line: track contacts relabelled (crossings or edge grazes) with true crossings apart', /Track contacts \d+ \(crossings or edge grazes; track mask \+\/-2-6 m\); true crossings \d+, ducted/.test(infoText) && !/road crossings \d+ \(ducted\)/.test(infoText), (infoText.match(/Track contacts[^.]*/) || [''])[0]);
   await A.set('A', 40, 600);
   check('duct OD vs the assumed 160 mm hole: flagged when the live duct reaches it', /FLAG: duct OD \d+ mm (exceeds|equals) the assumed 160 mm hole/.test(infoText), (infoText.match(/FLAG: duct OD[^.]*/) || ['none: ' + (infoText.match(/Duct [^;]*/) || [''])[0]])[0]);
