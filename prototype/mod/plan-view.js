@@ -8,6 +8,7 @@
 // top left; the grid-reference line (#where) is untouched.
 // Zoom into the wireframe: in plan, zooming in past z17.5 eases the pitch to 60 over 0.6 s and the real 3D wire
 // comes back (movement keeps the current mode's speed); zooming back out past z16.5 eases back to plan.
+// Walk, Drone or Map (or keys 1 2 3) leave plan: plan off, then the mode's own pitch, zoom and speed; plan adds no ease.
 // The 3D wire itself is never restyled: in plan it is hidden, in 3D it is shown as it was.
 // Look carried over from the Kuiper drawing look (its published stage tokens: background #090c13, ink #d5dcea,
 // dim #7d8799, cyan #2ee6e6, warm #e8b36a, row strokes #8ba6bb at 0.55 to 1.5 px). Values only; no code copied.
@@ -18,23 +19,33 @@
     kv: { '400': '#2ee6e6', '275': '#e8b36a', '132': '#9fd8a8' } };
   const IN = 17.5, OUT = 16.5, EASE = 600, DIM = 0.35, PITCH3D = 60;
   const PROV = ['measured', 'documented', 'estimated'];
-  const st = { on: false, in3d: false, easing: false, saved: {}, prev: null, eases: [], labels: 0, lines: 0, sig: '' };
+  const st = { left: [], kinds: {}, on: false, in3d: false, easing: false, saved: {}, prev: null, eases: [], labels: 0, lines: 0, sig: '' };
   let SIM, map, hud, labelsEl, btn, labelList = [];
 
   function wait(n) { const S = window.SIM; if (S && S.map && (S.PF || window.__pf)) init(S); else if (n < 400) setTimeout(() => wait(n + 1), 50); }
   // ---- which blocks are what: read from the tags the other mods already set ----
   const skip = b => b.substationLabel !== undefined || b.pulse || b.ground || !b.buf || !b.anchor;
-  const isRow = b => !!(b.sat || b.rowsGeometry || b.scannerRows || b.gpuRows || b.registerPoint === undefined && b.plant === false);
+  const isRow = b => !b.registerPoint && !!(b.sat || b.rowsGeometry || b.scannerRows || b.gpuRows || b.registerPoint === undefined && b.plant === false);
+  // What each projected block is, from its own module's tag (counted in state().kinds, so a check can say what plan drew).
+  const kindOf = b => b.scannerRows ? (b.registerPoint ? 'register-point' : 'scanner-rows') : b.gpuRows ? 'gpu-rows' : b.rowsGeometry ? 'rows-geometry'
+    : b.procedural ? 'procedural' : b.pylonsReal ? 'pylons' : b.substation !== undefined ? 'substation' : b.lidarStream ? 'lidar-stream'
+    : b.trench || b.kind === 'trench' ? 'trench' : b.plant ? 'plant' : 'other';
+  // Only the overlay's 3D wire and its look are hidden in plan. Other modules' own layers (procedural ghost, lidar-stream
+  // tiles over imagery, trench-measure) stay exactly as their module draws them: at pitch 0 they are seen from above.
+  const HIDE = new Set(['wire', 'wire-look-grid']);
   function provOf(b) {
     const p = typeof b.prov === 'string' ? b.prov : '';
-    if (/measur/i.test(p) || b.lidar) return 'measured';
-    if (b.est || b.sat || b.gpuRows || b.scannerRows || b.designPlant || b.built || /estimat|assum|derived/i.test(p)) return 'estimated';
+    if (b.registerPoint) return 'documented';
+    if (/measur/i.test(p) || b.lidar || b.lidarStream) return 'measured';
+    if (b.est || b.procedural || b.sat || b.gpuRows || b.scannerRows || b.designPlant || b.built || /estimat|assum|derived/i.test(p)) return 'estimated';
     return 'documented';
   }
   function labelOf(b) {
     if (b.designPlant) return 'design ' + b.designPlant + ' (imagined)';
     if (b.built) return 'block (imagined)';
+    if (b.scannerRows && b.registerPoint) return b.scannerRows + ' register point';
     if (b.scannerRows) return 'rows, scanner (estimated)';
+    if (b.procedural) return 'procedural ' + b.procedural + ' (estimated)';
     if (b.gpuRows) return 'rows, GPU (estimated)';
     if (b.rowsGeometry) return 'rows (estimated)';
     if (b.substation !== undefined) return '';            // substations are labelled from their mapped points
@@ -46,10 +57,11 @@
 
   // ---- the 2D drawing: each block's own buffer, anchor-relative Mercator, heights dropped ----
   function drawing() {
-    const PF = SIM.PF || window.__pf.PF, feats = [], marks = [];
+    const PF = SIM.PF || window.__pf.PF, feats = [], marks = [], kinds = {};
     let n = 0;
     for (const b of SIM.blocks) {
       if (skip(b)) continue;
+      const kd = kindOf(b); kinds[kd] = (kinds[kd] || 0) + 1;
       const o = PF.toMercator(b.anchor.lat, b.anchor.lon, 0), v = b.buf, segs = [];
       let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
       for (let k = 0; k + 5 < v.length; k += 6) {
@@ -71,7 +83,7 @@
       } else feats.push({ type: 'Feature', properties: { cls: 'obj', prov, hull: 0 }, geometry: { type: 'MultiLineString', coordinates: segs } });
       const t = labelOf(b); if (t) marks.push({ t, prov, at: [(x0 + x1) / 2, (y0 + y1) / 2] });
     }
-    st.lines = n;
+    st.lines = n; st.kinds = kinds;
     return { fc: { type: 'FeatureCollection', features: feats }, marks };
   }
   function hull(P) {                                    // monotone chain, closed ring
@@ -93,7 +105,7 @@
       if (L.id.startsWith('plan-')) continue;
       // Dim by brightness, not opacity: a parent and child tile drawn together at 35 % alpha would add up to a light patch.
       if (L.type === 'raster') { keep(L.id, 'o', map.getPaintProperty(L.id, 'raster-brightness-max') ?? 1); map.setPaintProperty(L.id, 'raster-brightness-max', DIM); }
-      else if (L.type === 'custom' || /^g(400|275|132)$/.test(L.id) || L.id === 'subs') {
+      else if (L.type === 'custom' && HIDE.has(L.id) || /^g(400|275|132)$/.test(L.id) || L.id === 'subs') {
         keep(L.id, 'v', map.getLayoutProperty(L.id, 'visibility') || 'visible'); map.setLayoutProperty(L.id, 'visibility', 'none');
       }
     }
@@ -202,8 +214,15 @@
     if (!st.in3d) map.easeTo({ pitch: st.prev ? Math.max(st.prev.pitch, 0) : 0, duration: EASE }); st.in3d = false;
   }
   // One frame later, so the zoom's own moveend has passed before the ease listens for its end.
-  function to3d() { st.in3d = true; clearPlan(); st.easing = true; requestAnimationFrame(() => ease(PITCH3D, 'zoom-in')); }
-  function toPlan() { st.in3d = false; applyPlan(); st.easing = true; requestAnimationFrame(() => ease(0, 'zoom-out')); }
+  // (If plan was left in that frame, e.g. by Walk, the ease is dropped: the mode's own camera wins.)
+  function to3d() { st.in3d = true; clearPlan(); st.easing = true; requestAnimationFrame(() => st.on ? ease(PITCH3D, 'zoom-in') : (st.easing = false)); }
+  function toPlan() { st.in3d = false; applyPlan(); st.easing = true; requestAnimationFrame(() => st.on ? ease(0, 'zoom-out') : (st.easing = false)); }
+  // Walk, Drone or Map (buttons, View menu, keys 1 2 3) leave plan cleanly: plan off, its look cleared, and NO camera
+  // move of plan's own, so the mode's pitch, zoom, speed and the current bearing are exactly what the mode sets.
+  function leave(why) {
+    if (!st.on) return; st.on = false; st.in3d = false; st.easing = false; mark(false); clearPlan();
+    st.left.push({ why, t: Math.round(performance.now()) });
+  }
   const toggle = () => (st.on ? off() : on());
   function mark(v) { if (btn) { btn.classList.toggle('on', v); btn.setAttribute('aria-pressed', String(v)); } }
 
@@ -244,7 +263,11 @@
         if (v === 'plan on') on(); else if (v === 'plan off') off(); else toggle(); return;
       }
       if (e.key === 'p' || e.key === 'P') toggle();
+      else if ((e.key === '1' || e.key === '2' || e.key === '3') && !(window.walkFps && window.walkFps.state().on)) leave('key ' + e.key);
     }, true);
+    // Clicks reach #walk / #drone / #map2d from the bar and from the View menu (its items click them); capture phase,
+    // so plan is off before the page's setMode starts its ease.
+    document.addEventListener('click', e => { const t = e.target && e.target.closest && e.target.closest('#walk,#drone,#map2d'); if (t) leave(t.id); }, true);
 
     // View > Plan: once the menu bar is up, the item sits after Map (3); without a menu bar it is a plain button.
     (function menu(n) {
@@ -260,7 +283,7 @@
     SIM.plan = { on, off, toggle,
       state: () => ({ on: st.on, in3d: st.in3d, easing: st.easing, pitch: +map.getPitch().toFixed(2), bearing: +map.getBearing().toFixed(2), zoom: +map.getZoom().toFixed(2),
         scaleBar: !!(hud && !hud.hidden && hud.querySelector('.plan-bar')), scaleM: hud ? +hud.dataset.metres || 0 : 0, scalePx: hud ? +hud.dataset.px || 0 : 0,
-        labels: st.labels, labelProv: labelList.map(l => l.prov), lines: st.lines, eases: st.eases.slice(),
+        labels: st.labels, kinds: Object.assign({}, st.kinds), left: st.left.slice(), labelProv: labelList.map(l => l.prov), lines: st.lines, eases: st.eases.slice(),
         dimmed: Object.keys(st.saved).filter(k => k.endsWith('|o')).length, hidden: Object.keys(st.saved).filter(k => k.endsWith('|v')).map(k => k.split('|')[0]) }),
       thresholds: { in: IN, out: OUT, easeMs: EASE, pitch3d: PITCH3D, dim: DIM }, provenance: PROV };
   }
