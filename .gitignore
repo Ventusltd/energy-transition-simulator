@@ -1,2 +1,4 @@
 node_modules/
 test-output/
+# private layer for ac-trenches (loaded only with ?private=1 on a local server); never committed
+prototype/mod/sld-layer.json
