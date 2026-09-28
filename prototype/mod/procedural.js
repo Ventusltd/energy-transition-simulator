@@ -11,9 +11,11 @@
   'use strict';
   // kV line file status (round r5), recorded HERE without touching pylons-real: its catch leaves lines[kv] = [] when a
   // fetch fails, which looks like a loaded empty file. So procedural watches the page's own resource timings for the
-  // grid_<kv>kv.geojson requests (nothing fetched here) and treats a kV as UNKNOWN when its file answered non-2xx, or
-  // produced no lines at all (a national kV file with no lines is not a credible load).
-  const kvHttp = {};                                            // kv -> HTTP status of its line file (0 = network failure or hidden)
+  // grid_<kv>kv.geojson requests (nothing fetched here) and treats a kV as UNKNOWN when its file produced no lines at all.
+  // That empty-list rule does the work: pylons-real's catch leaves [] for any failed fetch, so every failure lands there.
+  // The HTTP status below is only a second witness for the readout; status 0 (cross-origin, network) or a full timing
+  // buffer tells us nothing: it is ignored, and the empty-list rule alone decides.
+  const kvHttp = {};                                            // kv -> HTTP status of its line file (0 = unknown)
   try { new PerformanceObserver(l => { for (const e of l.getEntries()) { const m = /grid_(\d+)kv\.geojson/.exec(e.name); if (m) kvHttp[m[1]] = e.responseStatus || 0; } })
     .observe({ type: 'resource', buffered: true }); } catch (e) { /* no observer: fall back on the empty-file rule alone */ }
   const here = document.currentScript && document.currentScript.src ? document.currentScript.src : location.href;
@@ -121,10 +123,16 @@
     const crosses = (c, a, b) => { const ccw = (p, q, r) => (r[1] - p[1]) * (q[0] - p[0]) > (q[1] - p[1]) * (r[0] - p[0]);
       return c.some((p, i) => { const q = c[(i + 1) % 4]; return ccw(p, a, b) !== ccw(q, a, b) && ccw(p, q, a) !== ccw(p, q, b); }); };
     const rowDocs = () => { const R = window.SIM && window.SIM.scannerRows; return R && R.state && R.state.docs ? Object.values(R.state.docs) : []; };
+    // Round r6: the row files are loaded HERE on arrival, through Scanner rows' own loader (check(): reads the farm list and
+    // its row files into the same cache, draws nothing), so the fit depends only on the site and the row file, never on
+    // whether someone pressed Scanner rows first, nor on the kV line files or the order of tests. A failed load is said.
+    let rowsAsked = false, rowsErr = null;
+    const loadRows = () => { const R = window.SIM && window.SIM.scannerRows; if (rowsAsked || !R || typeof R.check !== 'function') return; rowsAsked = true;
+      R.check().then(() => { rowsErr = null; refresh(); }, e => { rowsErr = String(e && e.message || e); refresh(); }); };
     const sig = () => { const P = window.__pylonsReal;          // redo when the national line files or row files arrive, never on camera moves
       return 'lines' + (P && P.lines ? Object.keys(P.lines).filter(kv => Array.isArray(P.lines[kv])).sort().join(',') : '') + '|rows' + rowDocs().length; };
-    // Row fit (round r3): the measured rows the page has ALREADY loaded (Scanner rows: the lab's row files, lon/lat runs from
-    // imagery), never fetched here. Only runs whose midpoint lies inside THIS site's own square box (within h of the register
+    // Row fit (round r3): the measured rows in Scanner rows' cache (the lab's row files, lon/lat runs from imagery), loaded
+    // by its own loader on arrival (loadRows, r6). Only runs whose midpoint lies inside THIS site's own square box (within h of the register
     // point, in PF.toLocal metres) count, so a site is never credited with a neighbour's rows and the fit does not depend on
     // the camera. The box used for the test is the south default box (the engine's layout before any fit), so it does not
     // depend on the fit it feeds. Azimuth: axial median, compass degrees 0-180; pitch: the row file's own reading.
@@ -168,7 +176,7 @@
       const rowAz = ((st.layout === 'south' ? 90 : 0) + rot + 180) % 180;
       const rowTag = fit ? `row azimuth ${rowAz.toFixed(1)} deg, pitch ${T.pitch.toFixed(2)} m, fitted to ${fit.n.toLocaleString('en-GB')} measured rows inside a ${Math.round(2 * fit.boxHalfM).toLocaleString('en-GB')} m square around the register point`
         + (pitchUsed ? ' (pitch: the row file reading, estimated from imagery)' : ` (pitch: engine default, the row file's ${fit.pitchM ? fit.pitchM + ' m' : 'none'} did not fit the engine rule)`)
-        : `south formula, not calibrated: row azimuth 90 deg, pitch ${T.pitch.toFixed(2)} m`;
+        : `south formula, not calibrated: row azimuth 90 deg, pitch ${T.pitch.toFixed(2)} m` + (rowsErr ? ` (row file not loaded: ${rowsErr})` : '');
       for (const fl of res.fields || [res.boundary]) for (let i = 0; i < fl.length; i++) seg(at(...fl[i], 1.5), at(...fl[(i + 1) % fl.length], 1.5));
       const lo = P.lowEdgeM, hi = lo + T.rise, t = res.tables;
       for (let q = 0; q < t.length; q += 6) { const ua = t[q], va = t[q + 1], ub = ua + (res.tableLen?.[q / 6] ?? T.lenU), vb = va + T.depth;
@@ -205,7 +213,7 @@
     }
 
     async function refresh() {
-      if (!on) return; if (busy) { pending = true; return; } busy = true;
+      if (!on) return; loadRows(); if (busy) { pending = true; return; } busy = true;
       try {
         const c = map.getCenter(), b = map.getBounds(), k = Math.cos(c.lat * Math.PI / 180);
         const inView = r => r.lat > b.getSouth() - REACH_DEG && r.lat < b.getNorth() + REACH_DEG && r.lon > b.getWest() - REACH_DEG / k && r.lon < b.getEast() + REACH_DEG / k;
