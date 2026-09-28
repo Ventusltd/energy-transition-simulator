@@ -89,6 +89,8 @@ check('partial(): 75 % of a 20 m polyline ends 5 m up the second leg', pt.length
   check('real file: keyed by REPD ref, no name/site field', real.repd === 'REPD 6502' && !('name' in real) && !('site' in real), real.repd);
   check('real file: no drive paths, user paths or imagery URLs', !/[A-Za-z]:[\\/]|Users[\\/]|\.jpg|\.png|arcgisonline|private[\\/]/i.test(realText), 'scan');
   check('real file: neutral labels (never "as built", never a verdict on a site)', !/as[- ]built|non-?compliant|defect|poor(ly)? (built|installed)/i.test(realText), 'scan');
+  const src = fs.readFileSync(path.join(MOD, 'ac-trenches.js'), 'utf8');
+  check('module source: no "as built" anywhere on screen', !/as[- ]built/i.test(src), 'scan');
   check('real file: 8 cases (A/B x 1-4 sides)', ['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4'].every(k => real.cases[k]), Object.keys(real.cases).join(','));
   const bad = []; let unreached = 0;
   for (const [k, cs] of Object.entries(real.cases)) {
