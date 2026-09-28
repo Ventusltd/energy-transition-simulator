@@ -1,5 +1,9 @@
-// Plan view check (mod/plan-view.js): View > Plan, the key P and the typed "plan"; north-up and flat; the scale
-// bar; zoom into the wireframe (past z17.5 the pitch eases into 3D) and back out (past z16.5 it returns to plan).
+// Plan view check (mod/plan-view.js + mod/morph.js): View > Plan, the key P and the typed "plan"; north-up and flat;
+// the scale bar; the MORPH into the wireframe (past z17.5 the world rises from flat to 3D over 1.2 s, heights 0 -> 1
+// with the pitch 0 -> 60) and back out (past z16.5 it flattens to plan); the plan state machine (P from Walk, deeper
+// than z17.5, eases out to z16.5 flat, then a wheel in ends at pitch 60 with every height back at 1; a "go" from plan
+// leaves plan, legend included); and something by default at a register asset (P at the farm switches the scanner
+// rows, the procedural fill and the AC trench model on by itself, one label per object class).
 // Serves prototype/ on a local port. mod/index.json is NOT edited: the server answers it with the SHIPPED list plus
 // plan-view only (before menu-bar, which stays last), exactly as the lead will switch it on. No other module is added.
 // Leaving plan: from plan, Walk, Drone and Map (View menu or keys 1 2 3) give plan off and the mode's own camera.
@@ -16,8 +20,8 @@ const LINE = { lat: 52.2441634, lon: -1.0453368 };     // on a mapped 400 kV lin
 const SHOTS = process.env.SHOTS === '1';
 fs.mkdirSync(OUT, { recursive: true });
 function modList() {
-  const l = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'index.json'), 'utf8')).filter(n => n !== 'plan-view');
-  const i = l.indexOf('menu-bar'); if (i >= 0) l.splice(i, 0, 'plan-view'); else l.push('plan-view');
+  const l = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'index.json'), 'utf8')).filter(n => n !== 'plan-view' && n !== 'morph');
+  const i = l.indexOf('menu-bar'); if (i >= 0) l.splice(i, 0, 'morph', 'plan-view'); else l.push('morph', 'plan-view');
   return l;
 }
 const server = http.createServer((q, s) => {
@@ -53,12 +57,26 @@ const shot = async (p, name) => { if (SHOTS) { await p.screenshot({ path: path.j
 
   const mods = await p.evaluate(() => fetch('mod/index.json').then(r => r.json()));
   const shipped = JSON.parse(fs.readFileSync(path.join(ROOT, 'mod', 'index.json'), 'utf8'));
-  check('module list = shipped index.json + plan-view before menu-bar, nothing else', JSON.stringify(mods.filter(n => n !== 'plan-view')) === JSON.stringify(shipped.filter(n => n !== 'plan-view')) && mods.indexOf('plan-view') === mods.indexOf('menu-bar') - 1 && !mods.includes('gpu-rows'), mods.join(','));
+  check('module list = shipped index.json + morph + plan-view before menu-bar, nothing else', JSON.stringify(mods.filter(n => n !== 'plan-view' && n !== 'morph')) === JSON.stringify(shipped.filter(n => n !== 'plan-view' && n !== 'morph')) && mods.indexOf('plan-view') === mods.indexOf('menu-bar') - 1 && mods.indexOf('morph') === mods.indexOf('plan-view') - 1 && !mods.includes('gpu-rows'), mods.join(','));
+
+  // 0. Something by default: P on arrival at the farm (Drone first, as the lead's look does), nothing else pressed.
+  await p.evaluate(() => document.querySelector('#drone').click()); await p.waitForTimeout(4000); await idle(p);
+  await p.mouse.click(800, 600); await p.keyboard.press('p'); await p.waitForTimeout(16000); await idle(p);
+  let s = await state(p);
+  const dflt = await p.evaluate(() => ({ scanner: window.SIM.blocks.filter(b => b.scannerRows && !b.registerPoint).length, procedural: window.__procedural ? window.__procedural.ghostBlocks : 0,
+    trenches: window.__acTrenches ? window.__acTrenches.state().on : null, bunds: window.SIM.map.getLayer('act-bunds') ? 1 : 0,
+    labels: Array.from(document.querySelectorAll('#plan-labels .plan-label')).map(e => e.textContent) }));
+  const uniq = new Set(dflt.labels.map(t => t.replace(/ x\d+$/, '')));
+  check('P at the farm shows rows, the procedural fill and the trench model by itself', s.on && dflt.scanner > 0 && dflt.procedural > 0 && dflt.trenches === true && s.auto && s.auto.scanner && s.auto.procedural && s.auto.trenches,
+    JSON.stringify({ scanner: dflt.scanner, procedural: dflt.procedural, trenches: dflt.trenches, auto: s.auto, pitch: s.pitch, zoom: s.zoom }));
+  check('one label per object class', dflt.labels.length > 0 && uniq.size === dflt.labels.length && dflt.labels.length <= 12, dflt.labels.join(' | '));
+  await shot(p, '00-farm-P-default.png');
+  await p.keyboard.press('p'); await p.waitForTimeout(1800);
 
   // What the SHIPPED modules give at the farm, switched on by their own buttons: scanner rows, the procedural wire,
   // Connect here (then trench-measure's "trench auto"), the lidar-stream ground tile. Pylons and substations are on by default.
   const press = t => p.evaluate(t => { const b = Array.from(document.querySelectorAll('button')).find(x => x.textContent.trim().startsWith(t)); if (b && !b.classList.contains('on')) b.click(); return !!b; }, t);
-  const pressed = {}; for (const t of ['Scanner rows', 'Procedural', 'Connect here', 'Stream ground']) { pressed[t] = await press(t); await p.waitForTimeout(t === 'Scanner rows' ? 8500 : 2500); }
+  const pressed = {}; for (const t of ['Connect here', 'Stream ground']) { pressed[t] = await press(t); await p.waitForTimeout(2500); }
   await p.evaluate(() => new Promise(r => { const t0 = Date.now(); (function go() { if (window.__connect && window.__trench) { window.__trench.cmd('trench auto'); setTimeout(r, 2500); } else if (Date.now() - t0 < 20000) setTimeout(go, 500); else r(); })(); }));
   await p.evaluate(at => window.SIM.map.jumpTo({ center: [at.lon, at.lat], zoom: 14.6, pitch: 55, bearing: -20 }), FARM); await p.waitForTimeout(3000); await idle(p);
   const give = await p.evaluate(() => ({ scanner: window.SIM.blocks.filter(b => b.scannerRows === 'REPD 6502' && !b.registerPoint).length,
@@ -67,8 +85,8 @@ const shot = async (p, name) => { if (SHOTS) { await p.screenshot({ path: path.j
   console.log('shipped modules at REPD 6502: ' + JSON.stringify({ pressed, give }));
 
   // 1. The key P: plan, north-up, flat, dimmed, wire hidden, scale bar.
-  await p.mouse.click(800, 600); await p.keyboard.press('p'); await p.waitForTimeout(1500); await idle(p);
-  let s = await state(p);
+  await p.mouse.click(800, 600); await p.keyboard.press('p'); await p.waitForTimeout(1800); await idle(p);
+  s = await state(p);
   check('P: plan on, pitch 0 and bearing 0', s.on && Math.abs(s.pitch) < 0.01 && Math.abs(s.bearing) < 0.01, JSON.stringify({ on: s.on, pitch: s.pitch, bearing: s.bearing }));
   check('the scale bar is present', s.scaleBar && s.scaleM > 0 && s.scalePx > 20 && s.scalePx <= 120, `${s.scaleM} m = ${s.scalePx} px`);
   const north = await p.evaluate(() => { const n = document.querySelector('#plan-hud .plan-north'); return !!n && getComputedStyle(document.getElementById('plan-hud')).display !== 'none'; });
@@ -89,7 +107,7 @@ const shot = async (p, name) => { if (SHOTS) { await p.screenshot({ path: path.j
   const viaMode = async (how, m) => {
     await p.evaluate(at => window.SIM.map.jumpTo({ center: [at.lon, at.lat], zoom: 14.6 }), FARM);
     if (!(await state(p)).on) await p.evaluate(() => window.SIM.plan.on());
-    await p.waitForTimeout(1200); await p.evaluate(() => window.SIM.map.jumpTo({ bearing: 30 })); await p.waitForTimeout(300);
+    await p.waitForTimeout(1600); await p.evaluate(() => window.SIM.map.jumpTo({ bearing: 30 })); await p.waitForTimeout(300);
     const before = await state(p);
     if (how === 'menu') await p.evaluate(m => { window.SIM.menu.open('View'); const it = Array.from(document.querySelectorAll('.gm-panel[data-menu="View"] button')).find(b => b.textContent.startsWith(m[0].toUpperCase() + m.slice(1) + ' (')); it.click(); }, m);
     else { await p.mouse.click(800, 600); await p.keyboard.press(how); }
@@ -98,16 +116,42 @@ const shot = async (p, name) => { if (SHOTS) { await p.screenshot({ path: path.j
     const [P, Z] = MODES[m];
     check(`from plan, ${m} (${how === 'menu' ? 'View menu' : 'key ' + how}): plan off, pitch ${P}, zoom ${Z}, bearing kept, ${m} speed`,
       before.on && !a.on && !a.in3d && Math.abs(a.pitch - P) < 0.5 && Math.abs(a.zoom - Z) < 0.05 && Math.abs(a.bearing - 30) < 0.5 && spd.startsWith(m + ' ') &&
-      a.eases.length === before.eases.length && a.dimmed === 0 && a.hidden.length === 0,
+      a.eases.length === before.eases.length && a.dimmed === 0 && a.hidden.length === 0 && a.morphT === 1 && a.morphActive === false,
       JSON.stringify({ before: before.on, on: a.on, pitch: a.pitch, zoom: a.zoom, bearing: a.bearing, spd, newEases: a.eases.length - before.eases.length, left: a.left.slice(-1) }));
   };
   await viaMode('menu', 'walk'); await shot(p, '01b-walk-from-plan.png');
   await viaMode('1', 'walk'); await viaMode('2', 'drone'); await viaMode('menu', 'drone'); await viaMode('3', 'map'); await viaMode('menu', 'map');
   await p.evaluate(at => window.SIM.map.jumpTo({ center: [at.lon, at.lat], zoom: 14.6, pitch: 55, bearing: -20 }), FARM); await p.waitForTimeout(1500);
-  await p.mouse.click(800, 600); await p.keyboard.press('p'); await p.waitForTimeout(1500); await idle(p);
+  await p.mouse.click(800, 600); await p.keyboard.press('p'); await p.waitForTimeout(1800); await idle(p);
+
+  // 1c. The state machine from Walk: P deeper than z17.5 eases out to z16.5 flat; a wheel in then morphs to pitch 60
+  // with every height back at 1 (the overlay's u_zscale read back from the GPU where the wire's own program is in use).
+  await p.keyboard.press('p'); await p.waitForTimeout(1800);
+  await p.evaluate(at => window.SIM.map.jumpTo({ center: [at.lon, at.lat] }), FARM); await p.keyboard.press('1'); await p.waitForTimeout(1500);
+  const walkS = await state(p);
+  await p.keyboard.press('p'); await p.waitForTimeout(2000); await idle(p);
+  const flatS = await state(p);
+  check('P from Walk (z18.5): plan on, eased out to z16.5, flat, north-up', !walkS.on && Math.abs(walkS.zoom - 18.5) < 0.05 && flatS.on && !flatS.in3d && Math.abs(flatS.zoom - 16.5) < 0.05 && Math.abs(flatS.pitch) < 0.01 && Math.abs(flatS.bearing) < 0.01 && flatS.hidden.includes('wire'),
+    JSON.stringify({ walk: { zoom: walkS.zoom, pitch: walkS.pitch }, plan: { zoom: flatS.zoom, pitch: flatS.pitch, on: flatS.on, morphT: flatS.morphT } }));
+  await p.evaluate(() => window.SIM.map.zoomTo(18, { duration: 300 })); await p.waitForTimeout(2200); await idle(p);
+  const upS = await state(p), zsc = await p.evaluate(() => { try { const m = window.SIM.map, gl = m.painter.context.gl, pr = m.getLayer('wire').implementation.pr, l = gl.getUniformLocation(pr, 'u_zscale'); return l ? gl.getUniform(pr, l) : 'no u_zscale in the current program (wire-look draws the wire with its own fading program; the morph scales the matrix there)'; } catch (e) { return 'err ' + e.message; } });
+  const up = upS.morphs.filter(m => m.dir === 'up').pop();
+  check('wheel in from that plan ends at pitch 60 with every height at 1 (morph up over about 1.2 s)', upS.on && upS.in3d && Math.abs(upS.pitch - 60) < 0.5 && upS.morphT === 1 && upS.morphActive === false && !upS.hidden.includes('wire') && up && up.full && up.ms >= 1100 && up.ms <= 1800 && up.frames >= 20 && (zsc === 1 || typeof zsc === 'string'),
+    JSON.stringify({ pitch: upS.pitch, zoom: upS.zoom, morphT: upS.morphT, active: upS.morphActive, morph: up, u_zscale: zsc }));
+  // "go" from plan leaves plan, legend included (a lat, lon go: no network; the same flyTo path as a postcode go).
+  await p.evaluate(() => window.SIM.map.zoomTo(16, { duration: 300 })); await p.waitForTimeout(2200); await idle(p);
+  const backS = await state(p);
+  await p.evaluate(() => { const i = document.getElementById('fg-in'); i.value = 'go 51.5014, -0.1419'; i.focus(); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+  await p.waitForTimeout(1500);
+  const goS = await state(p), legend = await p.evaluate(() => ({ hud: document.getElementById('plan-hud').hidden, layers: ['plan-measured', 'plan-documented', 'plan-estimated', 'plan-g400', 'plan-subs'].filter(id => !!window.SIM.map.getLayer(id)), labels: document.querySelectorAll('#plan-labels .plan-label').length }));
+  check('"go" from plan leaves plan: legend gone, plan layers removed, dim and hides restored, heights at 1', backS.on && !backS.in3d && !goS.on && legend.hud === true && legend.layers.length === 0 && legend.labels === 0 && goS.dimmed === 0 && goS.hidden.length === 0 && goS.morphT === 1 && goS.left.slice(-1)[0].why === 'go',
+    JSON.stringify({ wasPlan: backS.on, on: goS.on, legend, left: goS.left.slice(-1)[0], morphT: goS.morphT }));
+  await p.waitForTimeout(4000); await shot(p, '01c-after-go.png');
+  await p.evaluate(at => window.SIM.map.jumpTo({ center: [at.lon, at.lat], zoom: 14.6, pitch: 55, bearing: -20 }), FARM); await p.waitForTimeout(1500);
+  await p.mouse.click(800, 600); await p.keyboard.press('p'); await p.waitForTimeout(1800); await idle(p);
 
   // 2. Typed "plan" in a box toggles it (off, then on again).
-  const typed = async () => { await p.evaluate(() => { let i = document.getElementById('plan-test-box'); if (!i) { i = document.createElement('input'); i.id = 'plan-test-box'; i.style.cssText = 'position:fixed;left:300px;top:300px;z-index:50'; document.body.appendChild(i); } i.value = ''; i.focus(); }); await p.keyboard.type('plan'); await p.keyboard.press('Enter'); await p.waitForTimeout(1200); };
+  const typed = async () => { await p.evaluate(() => { let i = document.getElementById('plan-test-box'); if (!i) { i = document.createElement('input'); i.id = 'plan-test-box'; i.style.cssText = 'position:fixed;left:300px;top:300px;z-index:50'; document.body.appendChild(i); } i.value = ''; i.focus(); }); await p.keyboard.type('plan'); await p.keyboard.press('Enter'); await p.waitForTimeout(1600); };
   await typed(); const offS = await state(p);
   await typed(); const onS = await state(p);
   await p.evaluate(() => { const i = document.getElementById('plan-test-box'); i.blur(); i.remove(); });
@@ -123,26 +167,26 @@ const shot = async (p, name) => { if (SHOTS) { await p.screenshot({ path: path.j
   await p.waitForTimeout(2500); await idle(p);
   await shot(p, '02-station-plan-z16.9.png');
   await p.evaluate(() => { window.__pz = []; const m = window.SIM.map, t0 = performance.now(); const f = () => { window.__pz.push([Math.round(performance.now() - t0), +m.getPitch().toFixed(1)]); if (performance.now() - t0 < 2500) requestAnimationFrame(f); }; requestAnimationFrame(f); m.zoomTo(18, { duration: 300 }); });
-  await p.waitForTimeout(560); await shot(p, '03-ease-frame-1.png');
-  await p.waitForTimeout(170); await shot(p, '04-ease-frame-2.png');
-  await p.waitForTimeout(1500); await idle(p); await shot(p, '05-ease-frame-3-3d.png');
+  await p.waitForTimeout(700); await shot(p, '03-morph-frame-1.png');
+  await p.waitForTimeout(400); await shot(p, '04-morph-frame-2.png');
+  await p.waitForTimeout(1500); await idle(p); await shot(p, '05-morph-frame-3-3d.png');
   s = await state(p); const pz = await p.evaluate(() => window.__pz);
-  const mid = pz.filter(([, v]) => v > 1 && v < 59).length, ease = s.eases.filter(e => e.why === 'zoom-in').pop();
-  check('zoom-in past z17.5 eases into the 3D wire', s.in3d && Math.abs(s.pitch - 60) < 0.5 && !s.hidden.includes('wire') && mid >= 5 && ease && ease.ms >= 450 && ease.ms <= 1200,
-    JSON.stringify({ in3d: s.in3d, pitch: s.pitch, zoom: s.zoom, midFrames: mid, easeMs: ease && ease.ms, sub }));
+  const mid = pz.filter(([, v]) => v > 1 && v < 59).length, ease = s.eases.filter(e => e.why === 'zoom-in').pop(), mo = s.morphs.filter(m => m.why === 'zoom-in').pop();
+  check('zoom-in past z17.5 morphs into the 3D wire (pitch 0 -> 60 and heights 0 -> 1 together, about 1.2 s)', s.in3d && Math.abs(s.pitch - 60) < 0.5 && !s.hidden.includes('wire') && mid >= 5 && ease && ease.ms >= 1000 && ease.ms <= 1800 && mo && mo.full && mo.frames >= 20 && s.morphT === 1 && s.morphActive === false,
+    JSON.stringify({ in3d: s.in3d, pitch: s.pitch, zoom: s.zoom, midFrames: mid, easeMs: ease && ease.ms, morph: mo, sub }));
 
-  // 4. Zoom back out past z16.5: plan again.
-  await p.evaluate(() => window.SIM.map.zoomTo(16, { duration: 300 })); await p.waitForTimeout(1800); await idle(p);
-  s = await state(p); const back = s.eases.filter(e => e.why === 'zoom-out').pop();
-  check('zoom-out past z16.5 returns to plan', s.on && !s.in3d && Math.abs(s.pitch) < 0.01 && Math.abs(s.bearing) < 0.01 && s.scaleBar && !!back,
-    JSON.stringify({ on: s.on, in3d: s.in3d, pitch: s.pitch, zoom: s.zoom, easeMs: back && back.ms }));
-  await p.keyboard.press('p'); await p.waitForTimeout(1200); s = await state(p);
-  check('P again leaves plan and restores the look', !s.on && s.dimmed === 0 && s.hidden.length === 0 && !(await p.evaluate(() => !!window.SIM.map.getLayer('plan-documented'))), JSON.stringify({ on: s.on, pitch: s.pitch }));
+  // 4. Zoom back out past z16.5: plan again (the reverse morph).
+  await p.evaluate(() => window.SIM.map.zoomTo(16, { duration: 300 })); await p.waitForTimeout(2200); await idle(p);
+  s = await state(p); const back = s.eases.filter(e => e.why === 'zoom-out').pop(), mb = s.morphs.filter(m => m.why === 'zoom-out').pop();
+  check('zoom-out past z16.5 morphs back to plan', s.on && !s.in3d && Math.abs(s.pitch) < 0.01 && Math.abs(s.bearing) < 0.01 && s.scaleBar && !!back && mb && mb.full && s.hidden.includes('wire') && s.morphT === 1 && s.fade === 1,
+    JSON.stringify({ on: s.on, in3d: s.in3d, pitch: s.pitch, zoom: s.zoom, easeMs: back && back.ms, morph: mb }));
+  await p.keyboard.press('p'); await p.waitForTimeout(1800); s = await state(p);
+  check('P again leaves plan (morph up) and restores the look', !s.on && s.dimmed === 0 && s.hidden.length === 0 && s.morphT === 1 && s.morphActive === false && !(await p.evaluate(() => !!window.SIM.map.getLayer('plan-documented'))), JSON.stringify({ on: s.on, pitch: s.pitch, morphT: s.morphT }));
 
   // 5. The 400 kV line in plan (View > Plan clicked from its menu).
   await p.goto(url(LINE), { waitUntil: 'load' }); await ready(p);
   await p.evaluate(() => window.SIM.map.jumpTo({ zoom: 14.2 }));
-  await p.evaluate(() => { window.SIM.menu.open('View'); document.getElementById('plan-view').click(); }); await p.waitForTimeout(1500); await idle(p);
+  await p.evaluate(() => { window.SIM.menu.open('View'); document.getElementById('plan-view').click(); }); await p.waitForTimeout(1800); await idle(p);
   s = await state(p);
   check('View > Plan by click: plan on at the 400 kV line', s.on && Math.abs(s.pitch) < 0.01, JSON.stringify({ on: s.on, pitch: s.pitch, labels: s.labels }));
   const kv = await p.evaluate(() => Array.from(document.querySelectorAll('#plan-labels .plan-label')).map(e => e.textContent).filter(t => /kV line/.test(t)));

@@ -79,7 +79,7 @@ function block(lon, lat) {
 const wire = {
   id: 'wire', type: 'custom', renderingMode: '3d',
   onAdd(m, gl) {
-    const vs = `uniform mat4 u; attribute vec3 p; void main(){ gl_Position = u * vec4(p, 1.0); }`;
+    const vs = `uniform mat4 u; uniform float u_zscale; attribute vec3 p; void main(){ gl_Position = u * vec4(p.xy, p.z * u_zscale, 1.0); }`;   // u_zscale (default 1.0): the block heights, so the wire world can be flattened and raised (mod/morph.js)
     const fs = `precision mediump float; void main(){ gl_FragColor = vec4(0.55, 0.9, 1.0, 1.0); }`;
     const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
     this.pr = gl.createProgram(); gl.attachShader(this.pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(this.pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(this.pr);
@@ -88,6 +88,7 @@ const wire = {
   render(gl, args) {
     const m = args.defaultProjectionData?.mainMatrix || args;
     gl.useProgram(this.pr);
+    { const zl = gl.getUniformLocation(this.pr, 'u_zscale'); if (zl) gl.uniform1f(zl, 1.0); }   // u_zscale: 1.0 = today's 3D; mod/morph.js lowers it per frame while it animates
     for (const b of blocks) {
       const a = b.anchor, gz = (map.queryTerrainElevation && map.queryTerrainElevation([a.lon, a.lat])) || 0;
       const o = PF.toMercator(a.lat, a.lon, gz), v = b.buf;
