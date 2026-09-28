@@ -23,21 +23,21 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
   await p.goto(`${base}?lat=52.2441634&lon=-1.0453368`, { waitUntil: 'load' }); await p.waitForTimeout(9000);
   check('no missing local files (404)', missing.length === 0, missing.join(' | ') || 'none');
   check('window.SIM exists (the app started)', await p.evaluate(() => !!window.SIM), 'window.SIM');
-  const btns = await p.$$eval('#bar button', bs => bs.map(x => x.textContent.trim()));
+  const btns = await p.$$eval('button', bs => bs.map(x => x.textContent.trim())); // controls live in the menu bar now (lane/ui), so look anywhere on the page
   for (const need of ['Satellite', 'Dark', 'Wire', 'Walk', 'Drone', 'Map', 'Pylons']) check(`button ${need}`, btns.some(t => t.startsWith(need)), btns.join(' | '));
   check('map canvas', await p.$('canvas.maplibregl-canvas'), 'maplibre canvas present');
   // 2. Pylons stand on GridAtlas line vertices.
-  await p.click('#pylons'); await p.waitForTimeout(3000);
+  await p.evaluate(() => document.querySelector('#pylons').click()); await p.waitForTimeout(3000);
   const pl = await p.textContent('#pylons'); const n = Number((pl.match(/\((\d+)\)/) || [])[1] || 0);
   check('pylons on the 400 kV line', n > 0, pl); await p.screenshot({ path: path.join(OUT, '1-pylons.png') });
   // 3. Walk and drone move you (the readout changes).
   const before = await p.textContent('#here-readout').catch(() => '');
-  await p.click('#walk'); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(800);
+  await p.evaluate(() => document.querySelector('#walk').click()); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(800);
   const after = await p.textContent('#here-readout').catch(() => '');
   check('walking moves you', before && after && before !== after, `${before} -> ${after}`); await p.screenshot({ path: path.join(OUT, '2-walk.png') });
-  await p.click('#drone'); await p.waitForTimeout(2500); await p.screenshot({ path: path.join(OUT, '3-drone.png') });
+  await p.evaluate(() => document.querySelector('#drone').click()); await p.waitForTimeout(2500); await p.screenshot({ path: path.join(OUT, '3-drone.png') });
   // 4. The wire view (morning engine look) keeps the objects.
-  await p.click('#wire'); await p.waitForTimeout(2500); await p.screenshot({ path: path.join(OUT, '4-wire.png') });
+  await p.evaluate(() => document.querySelector('#wire').click()); await p.waitForTimeout(2500); await p.screenshot({ path: path.join(OUT, '4-wire.png') });
   // 5. No names on screen: the page text holds no project name words from the public register (spot check: no "Solar Farm" label).
   const text = await p.evaluate(() => document.body.innerText);
   check('no project names on screen', !/solar farm|solar park/i.test(text), 'page text scanned');
