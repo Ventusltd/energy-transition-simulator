@@ -11,12 +11,12 @@
   'use strict';
   const here = document.currentScript && document.currentScript.src ? document.currentScript.src : location.href;
   const E = n => new URL('engine/' + n, here).href;
-  // Calibration state, said as it is (round 3): the six measured samples hold ground heights only (no row pitch, no fenced
-  // area), so N = 0 measured samples calibrate the solar formula. The one imagery row reading that passed
-  // (scanner-rows.calib.json, N = 1, derived from imagery, estimated) is an east-west tent farm: its pitch is a tent
-  // period, not a south row pitch, so it is not used for south rows. Pitch and MW per hectare stay engine-derived and tagged.
+  // Calibration state, said as it is: the six measured samples hold ground heights only (no row pitch, no fenced area), so
+  // N = 0 measured samples calibrate the south formula. Where the page has loaded imagery row runs (Scanner rows, derived
+  // from imagery, estimated) INSIDE a site's own box, the rows are fitted to them (azimuth, and pitch when the engine rule
+  // accepts it); a site with none inside its box keeps the south formula, tagged not calibrated. MW per hectare stays engine-derived.
   const CALIB = { N: 0, pitchTag: 'engine default (gcr formula), not calibrated', mwPerHaTag: 'derived from the engine site box, not calibrated' };
-  const LABEL = `procedural estimate (formula calibrated on ${CALIB.N} measured samples: the 6 samples hold ground only; the 1 imagery row reading is an east-west tent farm, not used for south rows)`;
+  const LABEL = `procedural estimate (formula calibrated on ${CALIB.N} measured samples: the 6 samples hold ground only; imagery row runs, estimated, set row azimuth and pitch only for a site with runs inside its own box)`;
   const MAX_ASSETS = 4, MIN_ZOOM = 12, REACH_DEG = 0.015;   // a site whose register point is within ~1.5 km of the view counts
   // GHOST style (the night's line-style rule: solid = measured, dashed = documented, ghost = estimated). Procedural wire is
   // estimated, so it is drawn by this module's OWN layer, faint and see-through, never in the solid cyan of measured wire,
@@ -101,35 +101,42 @@
     const rowDocs = () => { const R = window.SIM && window.SIM.scannerRows; return R && R.state && R.state.docs ? Object.values(R.state.docs) : []; };
     const sig = () => { const P = window.__pylonsReal, s = new Set(); if (P && P.live) for (const bk of P.live.values()) if (bk.t && bk.t.id) s.add(bk.t.id.split(':').slice(0, 2).join(':'));
       return [...s].sort().join(',') + '|rows' + rowDocs().length; };
-    // Row fit (round r2): the measured rows the page has ALREADY loaded (Scanner rows: the lab's row files, lon/lat runs from
-    // imagery), never fetched here. Runs whose midpoint is in the view give the row azimuth (axial median, compass degrees
-    // 0-180); the pitch is the row file's own pitch reading. Nothing in view: null, and the south formula stays.
+    // Row fit (round r3): the measured rows the page has ALREADY loaded (Scanner rows: the lab's row files, lon/lat runs from
+    // imagery), never fetched here. Only runs whose midpoint lies inside THIS site's own square box (within h of the register
+    // point, in PF.toLocal metres) count, so a site is never credited with a neighbour's rows and the fit does not depend on
+    // the camera. The box used for the test is the south default box (the engine's layout before any fit), so it does not
+    // depend on the fit it feeds. Azimuth: axial median, compass degrees 0-180; pitch: the row file's own reading.
+    // No runs inside the box: null, and the south formula stays, tagged not calibrated.
     const wrap90 = d => ((d % 180) + 270) % 180 - 90;           // to (-90, 90]
+    function halfSide(st, latDeg) {                                     // plant.js's open-land rule: half the square site box side, metres
+      const tpl = CM.derive(st, { catalogue }).tpl, ld = { ...PL.LAYOUT_DEFAULTS, ...(CM.layoutInput(st, { latDeg, catalogue }).options || {}) }, T0 = PL.tableGeometry(st.layout, ld, tpl);
+      return (Math.sqrt(Math.ceil(tpl.counts.strings / 2) * T0.pitch * (T0.lenU + PL.LAYOUT_DEFAULTS.tableGapM) * 1.5) + 2 * st.fence) / 2;
+    }
     function fitRows(r) {
-      const b = map.getBounds(), a = PF.placeKey(r.lat, r.lon), az = [], pitches = [];
+      const a = PF.placeKey(r.lat, r.lon), off = PF.toLocal(a, r.lat, r.lon, 0), hBox = halfSide({ ...CM.DEFAULTS, mw: r.mw }, r.lat), az = [], pitches = [];
       for (const doc of rowDocs()) { let n0 = 0;
-        for (const [[lo0, la0], [lo1, la1]] of doc.rows || []) { const la = (la0 + la1) / 2, lo = (lo0 + lo1) / 2;
-          if (la < b.getSouth() || la > b.getNorth() || lo < b.getWest() || lo > b.getEast()) continue;
+        for (const [[lo0, la0], [lo1, la1]] of doc.rows || []) {
+          const M = PF.toLocal(a, (la0 + la1) / 2, (lo0 + lo1) / 2, 0);
+          if (Math.abs(M.x - off.x) > hBox || Math.abs(M.y - off.y) > hBox) continue;
           const A = PF.toLocal(a, la0, lo0, 0), B = PF.toLocal(a, la1, lo1, 0); az.push(Math.atan2(B.x - A.x, B.y - A.y) * 180 / Math.PI); n0++; }
         if (n0 && doc.row_pitch_m > 0) pitches.push(doc.row_pitch_m); }
-      if (!az.length) return null;
+      if (!az.length) return { n: 0, boxHalfM: hBox };
       let sx = 0, sy = 0; for (const d of az) { sx += Math.cos(d * Math.PI / 90); sy += Math.sin(d * Math.PI / 90); }
       const c = Math.atan2(sy, sx) * 90 / Math.PI, dev = az.map(d => wrap90(d - c)).sort((p, q) => p - q);
       pitches.sort((p, q) => p - q);
-      return { azDeg: ((c + dev[dev.length >> 1]) % 180 + 180) % 180, pitchM: pitches.length ? pitches[pitches.length >> 1] : null, n: az.length };
+      return { azDeg: ((c + dev[dev.length >> 1]) % 180 + 180) % 180, pitchM: pitches.length ? pitches[pitches.length >> 1] : null, n: az.length, boxHalfM: hBox };
     }
 
     async function solar(r) {                                   // the engine's generator, as plant.js runs it
       // Rows fitted to the measured rows in view when there are any: rows within 45 deg of north-south use the engine's
       // east-west (tent) layout, others its south layout; the residual angle turns the whole layout about the register point.
-      const fit = fitRows(r), st = { ...CM.DEFAULTS, mw: r.mw };
+      const fr = fitRows(r), fit = fr.n ? fr : null, st = { ...CM.DEFAULTS, mw: r.mw };
       let rot = 0, pitchUsed = false;
       if (fit) { st.layout = Math.abs(wrap90(fit.azDeg)) <= 45 ? 'east-west' : 'south'; rot = wrap90(fit.azDeg - (st.layout === 'south' ? 90 : 0));
         if (fit.pitchM) { const d = CM.derive({ ...st, pitch: fit.pitchM }, { catalogue });   // the engine's own pitch rule, kept only if it fits
           pitchUsed = st.layout === 'south' ? d.gcr > 0 && d.gcr <= 0.9 : d.ewGapM >= 0.5; if (pitchUsed) st.pitch = fit.pitchM; } }
       const env = { latDeg: r.lat, catalogue }, inp = CM.layoutInput(st, env);
-      const tpl = CM.derive(st, { catalogue }).tpl, ld = { ...PL.LAYOUT_DEFAULTS, ...(inp.options || {}) }, T0 = PL.tableGeometry(st.layout, ld, tpl);
-      const side = Math.sqrt(Math.ceil(tpl.counts.strings / 2) * T0.pitch * (T0.lenU + PL.LAYOUT_DEFAULTS.tableGapM) * 1.5) + 2 * st.fence, h = side / 2;
+      const h = halfSide(st, r.lat), side = 2 * h;
       const ohl = ohlNear(r, h), th = rot * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
       const turn = ([e, n], s = 1) => [e * cs + s * n * sn, -s * e * sn + n * cs];     // clockwise by rot (s = -1: back)
       const ohlL = ohl.map(z => ({ ...z, pts: z.pts.map(q => turn(q, -1)) }));        // the real spans, in the layout's own frame
@@ -137,7 +144,7 @@
         piles: false, groundAt: () => 0, grid: null, water: [], ohl: ohlL.length ? ohlL : null, options: { ...inp.options, slopeLimitPct: st.slope, fenceSetbackM: st.fence } });
       const Fr0 = res.frame, Fr = { en: (u, v) => turn(Fr0.en(u, v)) }, T = res.table, P = res.params, out = [], at = (u, v, z) => [...Fr.en(u, v), z], seg = (a, b) => out.push([...a, ...b]);
       const rowAz = ((st.layout === 'south' ? 90 : 0) + rot + 180) % 180;
-      const rowTag = fit ? `row azimuth ${rowAz.toFixed(1)} deg, pitch ${T.pitch.toFixed(2)} m, fitted to ${fit.n.toLocaleString('en-GB')} measured rows in view`
+      const rowTag = fit ? `row azimuth ${rowAz.toFixed(1)} deg, pitch ${T.pitch.toFixed(2)} m, fitted to ${fit.n.toLocaleString('en-GB')} measured rows inside its own site box`
         + (pitchUsed ? ' (pitch: the row file reading, estimated from imagery)' : ` (pitch: engine default, the row file's ${fit.pitchM ? fit.pitchM + ' m' : 'none'} did not fit the engine rule)`)
         : `south formula, not calibrated: row azimuth 90 deg, pitch ${T.pitch.toFixed(2)} m`;
       for (const fl of res.fields || [res.boundary]) for (let i = 0; i < fl.length; i++) seg(at(...fl[i], 1.5), at(...fl[(i + 1) % fl.length], 1.5));
@@ -151,7 +158,7 @@
       const kept = (res.skipped && res.skipped.ohl) || 0, areaHa = side * side / 1e4, mwPerHa = r.mw / areaHa;
       const rowsV = [...new Set(Array.from({ length: t.length / 6 }, (_, i) => Math.round(t[6 * i + 1] * 1000) / 1000))].sort((a, b) => a - b);
       return { lines: out, geom: { ohl, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
-          formula: { pitchM: T.pitch, pitchTag: fit && pitchUsed ? 'row file reading, estimated from imagery' : CALIB.pitchTag, rowAzDeg: rowAz, layout: st.layout, fitN: fit ? fit.n : 0, fitAzDeg: fit ? fit.azDeg : null, rowTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
+          formula: { pitchM: T.pitch, pitchTag: fit && pitchUsed ? 'row file reading, estimated from imagery' : CALIB.pitchTag, rowAzDeg: rowAz, layout: st.layout, fitN: fit ? fit.n : 0, fitBoxHalfM: fr.boxHalfM, fitAzDeg: fit ? fit.azDeg : null, rowTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
             boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], rowsV } },
         text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, ${rowTag}, `
           + `site box ${areaHa.toFixed(1)} ha = ${mwPerHa.toFixed(2)} MW/ha (${CALIB.mwPerHaTag}), ${res.built.stations} stations; `
@@ -205,7 +212,7 @@
     const btn = SIM.addButton('Procedural', () => { on = !on; btn.classList.toggle('on', on); if (on) refresh(); else { drop(() => true); shown = []; say(''); btn.textContent = 'Procedural'; } });
     btn.id = 'procedural';
     map.on('moveend', refresh);
-    window.__proceduralRefresh = refresh; window.__proceduralGhost = () => ghost.length;
+    window.__proceduralRefresh = refresh; window.__proceduralFit = ref => { const r = rows.find(x => x.ref === ref); return r ? fitRows(r) : null; }; window.__proceduralGhost = () => ghost.length;
   }
 
   (function wait() { if (window.SIM && window.__pf && window.__pf.PF) start(window.SIM, window.__pf.PF); else setTimeout(wait, 100); })();

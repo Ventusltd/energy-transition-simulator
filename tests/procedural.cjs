@@ -69,24 +69,48 @@ async function browser() {
   check('site box area equals MW divided by the published MW/ha within 1%', fm && Math.abs(shoe - fm.mw / fm.mwPerHa) / shoe < 0.01,
     fm && `boundary ${shoe.toFixed(2)} ha; ${fm.mw} MW / ${fm.mwPerHa.toFixed(3)} MW/ha = ${(fm.mw / fm.mwPerHa).toFixed(2)} ha (${fm.mwPerHaTag})`);
   console.log('FORMULA 6502', JSON.stringify(fm && { pitchM: fm.pitchM, areaHa: fm.areaHa, mwPerHa: fm.mwPerHa, N: fm.N, rows: fm.rowsV.length, drawnPitch }));
-  // Row azimuth: drawn (from the table corners the layout placed) against the median of the measured rows in view,
-  // each read here on its own from the row file's lon/lat (not from the module's fit).
+  // Row azimuth: drawn (from the table corners the layout placed) against the median of the measured rows INSIDE the site's own
+  // box (half side fitBoxHalfM about the register point), each read here on its own from the row file's lon/lat with a plain
+  // equirectangular metre scale (not PF.toLocal, not the module's fit), and independent of the camera.
+  const inBox = () => window.__inBox = (f) => { const ax = d => ((d % 180) + 180) % 180, med = a => a.sort((p, q) => p - q)[a.length >> 1];
+    const h = f.geom.formula.fitBoxHalfM, k = Math.cos(f.lat * Math.PI / 180), M = 111320, m = [];
+    for (const doc of Object.values(window.SIM.scannerRows.state.docs)) for (const [[lo0, la0], [lo1, la1]] of doc.rows) {
+      const x = ((lo0 + lo1) / 2 - f.lon) * M * k, y = ((la0 + la1) / 2 - f.lat) * M; if (Math.abs(x) > h || Math.abs(y) > h) continue;
+      m.push(ax(Math.atan2((lo1 - lo0) * k, la1 - la0) * 180 / Math.PI)); }
+    return { n: m.length, measured: m.length ? med(m) : null }; };
+  await p.evaluate(inBox);
   const az = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); if (!f) return null;
     const ax = d => ((d % 180) + 180) % 180, med = a => a.sort((p, q) => p - q)[a.length >> 1];
-    const drawn = med(f.geom.tables.map(([a, b]) => ax(Math.atan2(b[0] - a[0], b[1] - a[1]) * 180 / Math.PI)));
-    const B = window.SIM.map.getBounds(), k = Math.cos(f.lat * Math.PI / 180), m = [];
-    for (const doc of Object.values(window.SIM.scannerRows.state.docs)) for (const [[lo0, la0], [lo1, la1]] of doc.rows) {
-      const la = (la0 + la1) / 2, lo = (lo0 + lo1) / 2; if (la < B.getSouth() || la > B.getNorth() || lo < B.getWest() || lo > B.getEast()) continue;
-      m.push(ax(Math.atan2((lo1 - lo0) * k, la1 - la0) * 180 / Math.PI)); }
-    const meas = med(m), diff = Math.abs(((drawn - meas) % 180 + 270) % 180 - 90);
-    return { drawn: +drawn.toFixed(2), measured: +meas.toFixed(2), n: m.length, diff: +diff.toFixed(2), rowTag: f.geom.formula.rowTag, layout: f.geom.formula.layout }; });
-  check('6502: drawn row azimuth within 5 deg of the median measured row azimuth in view', az && az.n > 0 && az.diff <= 5 && /fitted to [\d,]+ measured rows in view/.test(az.rowTag), JSON.stringify(az));
+    const drawn = med(f.geom.tables.map(([a, b]) => ax(Math.atan2(b[0] - a[0], b[1] - a[1]) * 180 / Math.PI))), ib = window.__inBox(f);
+    const diff = Math.abs(((drawn - ib.measured) % 180 + 270) % 180 - 90);
+    return { drawn: +drawn.toFixed(2), measured: +ib.measured.toFixed(2), nInBoxTest: ib.n, nFit: f.geom.formula.fitN, boxHalfM: +f.geom.formula.fitBoxHalfM.toFixed(1), diff: +diff.toFixed(2), rowTag: f.geom.formula.rowTag, layout: f.geom.formula.layout }; });
+  check('6502: drawn row azimuth within 5 deg of the median measured row azimuth inside its own site box', az && az.nFit > 0 && Math.abs(az.nFit - az.nInBoxTest) <= 0.02 * az.nInBoxTest && az.diff <= 5 && /fitted to [\d,]+ measured rows inside its own site box/.test(az.rowTag), JSON.stringify(az));
   console.log('AZIMUTH 6502', JSON.stringify(az));
+  // A neighbouring solar site in the same view with no runs inside ITS OWN box is not credited with 6502's rows.
+  const nb = await p.evaluate(() => window.__procedural.shown.filter(x => x.tech !== 'bess' && x.ref !== 6502).map(x => ({ ref: x.ref, mw: x.mw, fitN: x.geom.formula.fitN, inBoxTest: window.__inBox(x).n, boxHalfM: +x.geom.formula.fitBoxHalfM.toFixed(1), tag: x.geom.formula.rowTag })));
+  check('neighbouring small solar site with no runs in its own box: south formula, not calibrated', nb.some(x => x.fitN === 0 && x.inBoxTest === 0 && /^south formula, not calibrated/.test(x.tag)), JSON.stringify(nb));
+  // Anchored, not camera-bound: pan far away (6502 out of view) and back at the same zoom; the fit read away from the site and
+  // the drawn azimuth, pitch and table count must be identical.
+  const snap = () => p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); const fit = window.__proceduralFit(6502);
+    return f && { rowAz: f.geom.formula.rowAzDeg, pitch: f.geom.formula.pitchM, tables: f.geom.tables.length, fit: JSON.stringify(fit) }; });
+  const before = await snap();
+  await p.evaluate(() => window.SIM.map.jumpTo({ center: [1.05, 51.40], zoom: 15 })); await p.waitForTimeout(3000);
+  const awayFit = await p.evaluate(() => ({ fit: JSON.stringify(window.__proceduralFit(6502)), shown6502: window.__procedural.shown.some(x => x.ref === 6502) }));
+  await p.evaluate(() => window.SIM.map.jumpTo({ center: [0.91388, 51.33877], zoom: 15 })); await p.waitForTimeout(3000);
+  await p.evaluate(() => window.__proceduralRefresh()); await p.waitForTimeout(3000);
+  const after = await snap();
+  check('pan away and back: identical azimuth, pitch, table count; fit read with 6502 out of view is identical', before && after && !awayFit.shown6502 && before.rowAz === after.rowAz && before.pitch === after.pitch && before.tables === after.tables && before.fit === after.fit && awayFit.fit === before.fit,
+    JSON.stringify({ before: before && { ...before, fit: before.fit.slice(0, 90) }, awayShown: awayFit.shown6502, awayFitSame: before && awayFit.fit === before.fit, after: after && { rowAz: after.rowAz, pitch: after.pitch, tables: after.tables } }));
   await p.evaluate(() => { window.SIM.removeWhere(b => b.scannerRows); window.SIM.map.jumpTo({ center: [0.91388, 51.33877], zoom: 15, pitch: 0, bearing: 0 }); });
   await p.waitForTimeout(4000);
   await shot('1-solar-top');
   await p.click('#wire'); await p.waitForTimeout(2500); await shot('2-solar-wire');
-  await p.click('#walk'); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(1500); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('3-solar-walk');
+  const wt = await p.evaluate(() => { const f = window.__procedural.shown.find(x => x.ref === 6502); const c = f.geom.tables.map(t => t[0]).sort((a, b) => Math.abs(Math.hypot(...a) - 500) - Math.abs(Math.hypot(...b) - 500))[0];
+    const k = Math.cos(f.lat * Math.PI / 180); return [f.lon + c[0] / (111320 * k), f.lat + c[1] / 111320, c]; });
+  console.log('WALK AT TABLE (local m)', JSON.stringify(wt[2]));
+  await p.evaluate(([lo, la]) => window.SIM.map.jumpTo({ center: [lo, la], zoom: 18, pitch: 0, bearing: 0 }), wt); await p.waitForTimeout(3000);
+  const surveyOn = await p.$eval('#survey', x => x.classList.contains('on')).catch(() => false); if (surveyOn) await p.click('#survey');   // the survey grid hides the faint ghost rows at eye level
+  await p.click('#walk'); await p.waitForTimeout(2500); await p.keyboard.down('w'); await p.waitForTimeout(600); await p.keyboard.up('w'); await p.waitForTimeout(1500); await shot('3-solar-walk');
   await p.click('#drone'); await p.waitForTimeout(3000); await shot('4-solar-fly');
   // 2. A register battery site (REPD 16769, 400 MW): the assumed container yard.
   await p.goto(`${base}?lat=51.93835&lon=0.10570&zoom=16.5`, { waitUntil: 'load' }); await p.waitForTimeout(8000);
