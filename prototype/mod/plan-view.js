@@ -32,7 +32,7 @@
     : b.trench || b.kind === 'trench' ? 'trench' : b.plant ? 'plant' : 'other';
   // Only the overlay's 3D wire and its look are hidden in plan. Other modules' own layers (procedural ghost, lidar-stream
   // tiles over imagery, trench-measure) stay exactly as their module draws them: at pitch 0 they are seen from above.
-  const HIDE = new Set(['wire', 'wire-look-grid']);
+  const HIDE = new Set(['wire', 'wire-look-grid', 'lidar-stream-sat']);   // the streamed ground mesh would cover the 2D drawing (W-ui-plan, 01:55)
   function provOf(b) {
     const p = typeof b.prov === 'string' ? b.prov : '';
     if (b.registerPoint) return 'documented';
