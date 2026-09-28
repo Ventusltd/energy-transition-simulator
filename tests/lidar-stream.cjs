@@ -223,7 +223,7 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
     const grey = png(() => [128, 128, 128]);
     const q = await b.newPage({ viewport: { width: 1280, height: 800 } }), rErr = [];
     q.on('pageerror', e => rErr.push(e.message));
-    if (bias) await q.route(/mod\/lidar-stream\.js/, async r => { const f = await r.fetch(); r.fulfill({ response: f, body: (await f.text()).replace(/DEPTH_BIAS = 0\.0006/, `DEPTH_BIAS = ${bias}`) }); });
+    if (bias) await q.route(/mod\/lidar-stream\.js/, async r => { const f = await r.fetch(); r.fulfill({ response: f, body: (await f.text()).replace(/DEPTH_BIAS = [0-9.]+/,`DEPTH_BIAS = ${bias}`) }); });
     await q.route(/elevation-tiles-prod\/terrarium\/\d+\/\d+\/\d+\.png/, r => { const [z, x, y] = r.request().url().match(/terrarium\/(\d+)\/(\d+)\/(\d+)\.png/).slice(1).map(Number);
       r.fulfill({ status: 200, headers: { 'content-type': 'image/png', 'access-control-allow-origin': '*' }, body: demTile(z, x, y) }); });
     if (!realSat) await q.route(/World_Imagery/, r => r.fulfill({ status: 200, headers: { 'content-type': 'image/png', 'access-control-allow-origin': '*' }, body: grey }));
