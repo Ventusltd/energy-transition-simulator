@@ -67,7 +67,7 @@
 ],
 "width": {
 "formula": "n ducts x duct OD + (n - 1) x 0.100 m + 2 x 0.100 m",
-"status": "owner design page geometry (gap and margins), applied to one duct per inverter"
+"status": "GlobalGrid2050 design page geometry (gap and margins), applied to one duct per inverter"
 },
 "entry": {
 "straight_m": 1.0,
@@ -94,11 +94,11 @@
 },
 "B": {
 "label": "B: 1C 400 mm2 Al ATA armoured (HDPE sheath), direct buried, piled station, bottom entry",
-"scenario": "Scenario B: direct-buried armoured, piled station (illustrative; owner specification)",
+"scenario": "Scenario B: direct-buried armoured, piled station (illustrative; author's reference specification, GlobalGrid2050 cable catalogue)",
 "cable": {
 "od_mm": {
 "default": 37.4,
-"status": "datasheet: owner Cable Geometry catalogue, data-solar.js sc_al_ata_ac_400"
+"status": "datasheet: GlobalGrid2050 Cable Geometry catalogue, data-solar.js sc_al_ata_ac_400"
 },
 "mbr_mm": {
 "default": 449,

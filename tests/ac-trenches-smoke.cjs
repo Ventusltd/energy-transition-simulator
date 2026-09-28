@@ -102,10 +102,32 @@ check('partial(): 75 % of a 20 m polyline ends 5 m up the second leg', pt.length
   check('real file: every station in every case has 28 inverters routed or recorded unreached, and 28 holes', bad.length === 0, bad.slice(0, 4).join('; ') + ` (unreached recorded: ${unreached})`);
   check('real file: units drawn only where two were seen (class A)', real.bunds.every(b => (b.units_to_draw === 2) === (b.cls === 'A')), real.bunds.map(b => b.cls + b.units_to_draw).join(''));
   check('real file: chain centrelines over rows < 2 m in every case (routes on free ground)', Object.values(real.cases).every(c => c.totals.chain_rows_m < 2), Object.values(real.cases).map(c => c.totals.chain_rows_m).join(','));
+  // ---- FIX ROUND 1 (witnesses v2) ----
+  const OWN = /\bowner\b/i;
+  check('privacy: no "owner" in the real data file, the fixture or the module source', !OWN.test(realText) && !OWN.test(fs.readFileSync(path.join(__dirname, 'fixtures', 'ac-trenches-fixture.json'), 'utf8')) && !OWN.test(fs.readFileSync(path.join(MOD, 'ac-trenches.js'), 'utf8')), 'scan');
+  const rc = Object.entries(real.cases).map(([k, c]) => { const T = c.totals, list = c.stations.flatMap(s => s.tab_runs || []);
+    return { k, T, lc: list.filter(r => r[2] === 'c').length, la: list.filter(r => r[2] === 'a').length, img: c.stations.reduce((t, s) => t + (s.seam_img_runs || []).length, 0) }; });
+  check('closed table mask: chain runs > 1 m are 0, or every one is listed per station', rc.every(r => r.T.rows_crossed === r.lc && r.T.rows_crossed_entry === r.la), rc.map(r => `${r.k} ${r.T.rows_crossed}/${r.lc} ${r.T.rows_crossed_entry}/${r.la}`).join(' '));
+  check('imagery test: chain runs >= 1.5 m inside visible panel are 0, or listed per station', rc.every(r => r.T.seam_img_runs === r.img), rc.map(r => `${r.k} ${r.T.seam_img_runs}`).join(' '));
+  check('rows crossed on screen = JSON centre_rows_m less the corner clips (chains + entry legs), every case', rc.every(r => Math.abs(r.T.centre_rows_m - r.T.clip_m - r.T.rows_crossed_m - r.T.rows_crossed_entry_m) < 0.15), rc.map(r => `${r.k} ${r.T.centre_rows_m}-${r.T.clip_m}=${r.T.rows_crossed_m}+${r.T.rows_crossed_entry_m}`).join(' '));
+  const offend = rc.map(r => { const e = A.evaluate(real, r.k[0], r.k[1]).E.filter(x => x.rowx); return { k: r.k, n: e.length, ok: e.every(x => x.fault), need: r.T.rows_crossed + r.T.rows_crossed_entry + r.T.seam_img_runs }; });
+  check('every row-crossing edge is drawn in the fault colour (and there is one wherever the JSON counts one)', offend.every(o => o.ok && (o.need === 0 || o.n > 0)), offend.map(o => `${o.k} ${o.n}`).join(' '));
+  const bl = rc.map(r => ({ k: r.k, live: A.evaluate(real, r.k[0], r.k[1]).bendFlags.length, json: r.T.bend_flags }));
+  check('live bend count at defaults equals the table, every case', bl.every(b => b.live === b.json), bl.map(b => `${b.k} ${b.live}/${b.json}`).join(' '));
+  check('widest station: cases.X.widest and totals.widest agree, every case', Object.values(real.cases).every(c => real.bunds[c.widest.si].id === c.totals.widest.station && c.widest.n === c.totals.widest.n), Object.entries(real.cases).map(([k, c]) => `${k} ${real.bunds[c.widest.si].id}/${c.totals.widest.station}`).join(' '));
+  check('live widest station equals totals.widest, every case', rc.every(r => real.bunds[A.evaluate(real, r.k[0], r.k[1]).widest.si].id === r.T.widest.station), rc.map(r => real.bunds[A.evaluate(real, r.k[0], r.k[1]).widest.si].id).join(','));
   await A.toggle();   // through the stub map: plan layers, 3D wires and the info line, no private fetch
   check('toggle: plan layers added (trench, holes, roads, crossings, bends)', ['act-trench', 'act-holes', 'act-roads', 'act-cross', 'act-bends'].every(id => layers.has(id)), [...layers.keys()].join(','));
   check('toggle: 3D station wires built', A.state().wires.length === 6 && A.state().wires.some(w => w.n > 0), JSON.stringify(A.state().wires));
   check('info line: MODEL, illustrative, derating NOT assessed, no "as built"', /MODEL/.test(infoText) && /illustrative/.test(infoText) && /Derating NOT assessed/.test(infoText) && !/as built/i.test(infoText), infoText.slice(0, 120));
+  check('info line: no "owner"', !OWN.test(infoText), 'scan');
+  await A.select('A', '4');
+  const T4 = real.cases.A4.totals, want = T4.rows_crossed_entry ? `${T4.rows_crossed_entry} entry legs (${T4.rows_crossed_entry_m} m) at ${T4.entry_crossed_stations} stations` : 'Rows crossed: 0';
+  check('info line A4 carries the rows-crossed line from the JSON', infoText.includes(want) && !OWN.test(infoText), want);
+  check('info line: track contacts relabelled (crossings or edge grazes) with true crossings apart', /Track contacts \d+ \(crossings or edge grazes; track mask \+\/-2-6 m\); true crossings \d+, ducted/.test(infoText) && !/road crossings \d+ \(ducted\)/.test(infoText), (infoText.match(/Track contacts[^.]*/) || [''])[0]);
+  await A.set('A', 40, 600);
+  check('duct OD vs the assumed 160 mm hole: flagged when the live duct reaches it', /FLAG: duct OD \d+ mm (exceeds|equals) the assumed 160 mm hole/.test(infoText), (infoText.match(/FLAG: duct OD[^.]*/) || ['none: ' + (infoText.match(/Duct [^;]*/) || [''])[0]])[0]);
+  await A.set('A', 31.5, 472);
   check('private layer NOT fetched without ?private=1 on a local server', fetched.every(u => !/sld-layer/.test(u)) && !A.state().priv, fetched.join(','));
   await A.select('B', '1');
   check('select B1: piles and units drawn at the focused station', A.state().inst === 'B' && A.state().wires.find(w => w.kind === 'piles').n > 0, JSON.stringify(A.state().wires));

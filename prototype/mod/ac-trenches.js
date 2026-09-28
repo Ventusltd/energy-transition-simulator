@@ -1,5 +1,5 @@
 // ac-trenches v2: every LV AC trench at REPD 6502, drawn to scale from mod/ac-trenches-6502.json, for two illustrative
-// scenarios at the same stations (owner reference: 28 three-phase inverters per 10 MVA station, 84 phase cables):
+// scenarios at the same stations (author's reference design: 28 three-phase inverters per 10 MVA station, 84 phase cables):
 //   A  bunded station, side-entry ducts: 3 x 1C 400 mm2 Al XLPE/PVC unarmoured pulled together in ONE duct per inverter,
 //      each duct into its own pre-drilled hole in the bund wall after a straight perpendicular entry.
 //   B  direct-buried armoured (1C 400 mm2 Al ATA, HDPE sheath), no bund: the station stands on screw piles and the cables
@@ -57,7 +57,7 @@
   const ll = (e, n) => llOf(doc)(e, n);
   const caseOf = (d, i, s) => d.cases[i + s];
   function edgesOf(d, c) {
-    return c.edges.map(r => { const V = []; for (let k = 6; k < r.length; k += 2) V.push([r[k], r[k + 1]]); return { si: r[0], kind: r[1], n: r[2], avail: r[3], L0: r[4], fault0: !!r[5], V }; });
+    return c.edges.map(r => { const V = []; for (let k = 6; k < r.length; k += 2) V.push([r[k], r[k + 1]]); return { si: r[0], kind: r[1], n: r[2], avail: r[3], L0: r[4], fault0: !!(r[5] & 1), rowx: !!(r[5] & 2), V }; });
   }
   function hull(pts) {
     const Pp = pts.slice().sort((p, q) => p[0] - q[0] || p[1] - q[1]); if (Pp.length < 3) return Pp;
@@ -72,11 +72,11 @@
     let km = 0, widest = { n: 0, w: 0, L: 1, si: -1 }, faults = 0;
     for (const e of E) {
       const { L, fault } = e.kind === 'a' ? { L: 1, fault: false } : layersFor(pp, e.n, e.avail);
-      e.L = L; e.w = width(pp, e.n, L); e.fault = fault || e.fault0; faults += e.fault ? 1 : 0;
+      e.L = L; e.w = width(pp, e.n, L); e.fault = fault || e.fault0 || e.rowx; faults += (fault || e.fault0) ? 1 : 0;   // rowx: a row crossing (fault colour, counted apart)
       let len = 0; for (let k = 1; k < e.V.length; k++) len += Math.hypot(e.V[k][0] - e.V[k - 1][0], e.V[k][1] - e.V[k - 1][1]); e.len = len; km += len / 1000;
-      if (e.n > widest.n || (e.n === widest.n && e.w > widest.w)) widest = { n: e.n, w: e.w, L, si: e.si };
+      if (e.n > widest.n || (e.n === widest.n && (e.w > widest.w || (e.w === widest.w && e.si < widest.si)))) widest = { n: e.n, w: e.w, L, si: e.si };   // ties: lowest station index (as the JSON)
     }
-    const bendFlags = c.bends.filter(b => b[2] < pp.R - 1e-9), bendBy = {};
+    const bendFlags = c.bends.filter(b => b[2] < pp.R - 1e-6), bendBy = {};   // same tolerance as the build (rmax stored to 1e-6 m)
     for (const b of bendFlags) bendBy[b[4]] = (bendBy[b[4]] || 0) + 1;
     let entryFlags = 0; const entryBy = {};
     for (const p of c.ports) for (const cl of p.clear) if (cl != null && cl < pp.Ls + pp.R - 1e-9) { entryFlags++; entryBy[p.si] = (entryBy[p.si] || 0) + 1; }
@@ -153,7 +153,7 @@
         el.style.cssText = 'font:11px sans-serif;color:#fff;background:rgba(0,0,0,.6);padding:1px 4px;border-radius:3px;white-space:nowrap;pointer-events:none;' + (css || '');
         el.textContent = txt; try { marks.push(new maplibregl.Marker({ element: el }).setLngLat(at).addTo(map)); } catch (e) { /* projection or DEM not ready */ }
       };
-      const unit = n => inst === 'A' ? (n === 1 ? 'duct' : 'ducts') : (n === 1 ? 'circuit' : 'circuits');
+      const unit = unitOf;
       const segs = ev.E.filter(e => e.kind === 'c' && e.len >= 8).map(e => { const k = Math.floor(e.V.length / 2), a = e.V[Math.max(0, k - 1)], b = e.V[k]; return { e, at: ll((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) }; })
         .filter(x => bb.contains(x.at)).sort((x, y) => y.e.n - x.e.n || y.e.len - x.e.len).slice(0, 40);
       for (const { e, at } of segs) mk(`${e.n} ${unit(e.n)}${e.L > 1 ? ' in ' + e.L + ' layers' : ''} ${e.w.toFixed(2)} m${e.fault ? ' FLAG' : ''}`, at, e.fault ? 'background:' + FAULT : '');
@@ -338,31 +338,42 @@
     const yaw = Math.atan2((B.centre[0] - lon) * doc.frame.KX, (B.centre[1] - lat) * doc.frame.KY) * 180 / Math.PI;
     if (window.walkFps) { map.jumpTo({ center: [lon, lat], zoom: 19, bearing: yaw, pitch: 80 }); try { window.walkFps.enter(); window.walkFps.set({ lon, lat, yaw, pitch: 78 }); } catch (e) { /* walk-fps not ready */ } }
     else map.jumpTo({ center: [lon, lat], zoom: 20.5, bearing: yaw, pitch: 78 });
-    showSection(); info(`Stepped in: eye ${EYE} m in the widest approach, ${B.id}: ${W.n} ${inst === 'A' ? 'ducts' : 'circuits'}.`);
+    showSection(); info(`Stepped in: eye ${EYE} m in the widest approach, ${B.id}: ${W.n} ${unitOf(W.n)}.`);
   }
   let secBox = null;
   function showSection() {
     if (!doc) return; const ev = evaluate(doc, inst, sides), W = caseOf(doc, inst, sides).widest, pp = ev.pp, L = layersFor(pp, W.n, 99).L;
     if (!secBox) { secBox = document.createElement('div'); secBox.id = 'act-section'; secBox.style.cssText = 'position:absolute;left:8px;right:8px;bottom:34px;z-index:7;background:#101418;border:1px solid #456;border-radius:6px;padding:6px;max-height:55vh;overflow:auto;color:#dfe;font:12px sans-serif'; document.body.appendChild(secBox); }
     const head = pp.which === 'A' ? `${W.n} ducts ${pp.duct ? pp.duct.od_mm + '/' + pp.duct.id_mm + ' mm' : '(no duct passes)'}, each 3 x ${P.A.od} mm cables (${pp.dcheck ? pp.dcheck.config : ''})` : `${W.n} circuits = ${3 * W.n} armoured ${P.B.od} mm cables, flat, one diameter clear, timber spacers`;
-    secBox.innerHTML = `<div style="display:flex;justify-content:space-between"><b>End-on section at true scale, MODEL, widest approach (${doc.bunds[W.si].id}): ${head}; ${width(pp, W.n, L).toFixed(3)} m wide. Floor 0.9 m and bed 50 mm assumed. Derating NOT assessed.</b><button id="act-sec-x">close</button></div>${sectionSVG(pp, W.n, L)}`;
+    secBox.innerHTML = `<div style="display:flex;justify-content:space-between"><b>End-on section at true scale, MODEL, widest approach (${doc.bunds[W.si].id}): ${head}; ${width(pp, W.n, L).toFixed(3)} m wide. Floor 0.9 m and bed 50 mm assumed${L > 1 ? '; with ' + L + ' layers the floor is kept at 0.9 m (assumed; the extra depth of stacked layers is not modelled)' : ''}. Derating NOT assessed.</b><button id="act-sec-x">close</button></div>${sectionSVG(pp, W.n, L)}`;
     secBox.style.display = 'block'; secBox.querySelector('#act-sec-x').onclick = () => { secBox.style.display = 'none'; };
   }
   function table() {
     if (!doc) return; const ev = evaluate(doc, inst, sides), c = ev.c;
-    const rows = c.stations.map(s => `<tr><td>${s.id}</td><td>${doc.bunds[s.si].cls}</td><td>${Object.entries(s.sides).map(([k, v]) => k + v).join(' ')}</td><td>${s.trench_km}</td><td>${s.widest_n} / ${s.widest_w} m${s.widest_L > 1 ? ' (' + s.widest_L + ' layers)' : ''}</td><td>${ev.bendBy[s.si] || 0}</td><td>${ev.entryBy[s.si] || 0}</td><td>${s.chain_rows_m}</td><td>${s.env_rows_m2}</td><td>${s.d_track_med}</td><td>${s.row_clear_med}</td><td>${s.road_crossings}</td><td>${s.routes}${s.unreachable ? ' (' + s.unreachable + ' unreached)' : ''}</td></tr>`).join('');
-    showBox(`<b>Per station, ${inst}${sides} (live bend flags at R = ${ev.pp.R.toFixed(3)} m; the rest computed at the default radius)</b><table style="border-collapse:collapse;font:11px monospace" border="1"><tr><th>st</th><th>class</th><th>holes per side</th><th>trench km</th><th>widest</th><th>bend flags</th><th>entry flags</th><th>centreline over rows m</th><th>envelope over rows m2</th><th>to track m (median)</th><th>clear of rows m (median)</th><th>road crossings</th><th>routes</th></tr>${rows}</table>`);
+    const rx = s => { const f = (m, n) => `${m} m (${n})`, bad = s.rows_crossed || s.rows_crossed_entry; return `<td${bad ? ' style="background:' + FAULT + '"' : ''}>${f(s.rows_crossed_m, s.rows_crossed)} / ${f(s.rows_crossed_entry_m, s.rows_crossed_entry)}</td>`; };
+    const rows = c.stations.map(s => `<tr><td>${s.id}</td><td>${doc.bunds[s.si].cls}</td><td>${Object.entries(s.sides).map(([k, v]) => k + v).join(' ')}</td><td>${s.trench_km}</td><td>${s.widest_n} / ${s.widest_w} m${s.widest_L > 1 ? ' (' + s.widest_L + ' layers)' : ''}</td><td>${ev.bendBy[s.si] || 0}</td><td>${ev.entryBy[s.si] || 0}</td>${rx(s)}<td>${(s.seam_img_runs || []).length}</td><td>${s.env_rows_m2}</td><td>${s.d_track_med}</td><td>${s.row_clear_med}</td><td>${s.road_crossings} / ${s.true_crossings}</td><td>${s.routes}${s.unreachable ? ' (' + s.unreachable + ' unreached)' : ''}</td></tr>`).join('');
+    const T = c.totals, tot = `<tr style="font-weight:bold"><td>all</td><td></td><td></td><td>${T.trench_km}</td><td>${T.widest.station}: ${T.widest.n} / ${T.widest.w} m</td><td>${ev.bendFlags.length}</td><td>${ev.entryFlags}</td>${rx(T)}<td>${T.seam_img_runs}</td><td>${T.env_rows_m2}</td><td></td><td></td><td>${T.road_crossings} / ${T.true_crossings}</td><td>${T.routes}${T.unreachable ? ' (' + T.unreachable + ' unreached)' : ''}</td></tr>`;
+    showBox(`<b>Per station, ${inst}${sides} (live bend flags at R = ${ev.pp.R.toFixed(3)} m; the rest computed at the default radius)</b><table style="border-collapse:collapse;font:11px monospace" border="1"><tr><th>st</th><th>class</th><th>holes per side</th><th>trench km</th><th>widest</th><th>bend flags</th><th>entry flags</th><th>rows crossed: chains / entry legs (m, count; closed table mask)</th><th>chain runs &gt;= 1.5 m inside visible panel</th><th>envelope over rows m2</th><th>to track m (median)</th><th>clear of rows m (median)</th><th>track contacts / true crossings</th><th>routes</th></tr>${rows}${tot}</table><div style="font:11px sans-serif;max-width:900px">Rows crossed: runs over 1 m of centreline inside the closed table mask (rows, table-end blobs and the seams between them); shorter runs are corner clips of the 0.5 m raster. Track contacts: places where a chain meets the track mask (crossings or edge grazes; the track mask is good to +/-2-6 m). True crossings: the chain enters and leaves on opposite sides of the track line; crossings are ducted.</div>`);
   }
   let box = null;
   function showBox(html) { if (!box) { box = document.createElement('div'); box.id = 'act-box'; box.style.cssText = 'position:absolute;left:8px;top:120px;z-index:8;background:rgba(10,14,18,.95);color:#dfe;padding:6px;border:1px solid #456;border-radius:6px;max-height:70vh;max-width:96vw;overflow:auto;font:12px sans-serif'; document.body.appendChild(box); } box.innerHTML = '<button id="act-box-x" style="float:right">close</button>' + html; box.style.display = 'block'; box.querySelector('#act-box-x').onclick = () => { box.style.display = 'none'; }; }
 
+  const unitOf = n => inst === 'A' ? (n === 1 ? 'duct' : 'ducts') : (n === 1 ? 'circuit' : 'circuits');
+  function rowsLine(T) {   // shown whenever it is not 0 (closed table mask: rows, table-end blobs and the seams between them)
+    const a = [];
+    if (T.rows_crossed) a.push(`${T.rows_crossed} trench chains (${T.rows_crossed_m} m) at ${T.rows_crossed_stations} stations`);
+    if (T.rows_crossed_entry) a.push(`${T.rows_crossed_entry} entry legs (${T.rows_crossed_entry_m} m) at ${T.entry_crossed_stations} stations`);
+    if (T.seam_img_runs) a.push(`${T.seam_img_runs} chain runs (${T.seam_img_m} m) 1.5 m or more inside visible panel`);
+    return a.length ? `ROWS CROSSED: ${a.join('; ')} (magenta). ` : 'Rows crossed: 0 (closed table mask). ';
+  }
   function info(extra) {
     if (!doc) return; const ev = evaluate(doc, inst, sides), pp = ev.pp, I = doc.installations[inst], T = ev.c.totals;
-    const duct = inst === 'A' ? (pp.duct ? `Duct ${pp.duct.od_mm}/${pp.duct.id_mm} mm (${pp.drule}; J ${pp.dcheck.J.toFixed(2)} ${pp.dcheck.band}, fill ${(pp.dcheck.fill * 100).toFixed(1)} %, clearance ${pp.dcheck.cl.toFixed(1)} mm, ${pp.dcheck.config}). ` : 'NO duct in the table passes at this OD. ') : '';
+    const hole = doc.installations.A.holes.diameter_mm, holeFlag = inst === 'A' && pp.duct ? (pp.duct.od_mm > hole ? `FLAG: duct OD ${pp.duct.od_mm} mm exceeds the assumed ${hole} mm hole. ` : pp.duct.od_mm === hole ? `FLAG: duct OD ${pp.duct.od_mm} mm equals the assumed ${hole} mm hole (no clearance). ` : '') : '';
+    const duct = inst === 'A' ? (pp.duct ? `Duct ${pp.duct.od_mm}/${pp.duct.id_mm} mm (${pp.drule}; J ${pp.dcheck.J.toFixed(2)} ${pp.dcheck.band}, fill ${(pp.dcheck.fill * 100).toFixed(1)} %, clearance ${pp.dcheck.cl.toFixed(1)} mm, ${pp.dcheck.config}). ` : 'NO duct in the table passes at this OD. ') + holeFlag : '';
     window.SIM.info(`REPD 6502 AC trenches, MODEL (illustrative scenarios on this test ground; not a design, not a survey). ${I.scenario}. Entry through ${sides} side${sides === '1' ? '' : 's'}. ` +
       `Cable OD ${P[inst].od} mm, MBR ${P[inst].mbr} mm (${inst === 'A' ? 'assumed' : 'catalogue'}). ${duct}Governing bend ${pp.R.toFixed(3)} m (${pp.governs})${pp.mbrFlag ? ' FLAG: cable MBR larger than the duct bend' : ''}. ` +
-      `Trench ${ev.km.toFixed(2)} km; widest ${ev.widest.n} ${inst === 'A' ? 'ducts' : 'circuits'} ${ev.widest.w.toFixed(2)} m${ev.widest.L > 1 ? ' in ' + ev.widest.L + ' layers' : ''}; bends tighter than ${pp.R.toFixed(2)} m: ${ev.bendFlags.length}; entries too short: ${ev.entryFlags}; width flags ${ev.faults} (magenta). ` +
-      `Routes ${T.routes} (${T.cables} cables), road crossings ${T.road_crossings} (ducted). Rows, gaps, tracks and stations estimated from Esri imagery (2025-03-29); inverters, holes, piles, sections assumed. Derating NOT assessed. ` + (extra || ''));
+      `Trench ${ev.km.toFixed(2)} km; widest ${ev.widest.n} ${unitOf(ev.widest.n)} ${ev.widest.w.toFixed(2)} m${ev.widest.L > 1 ? ' in ' + ev.widest.L + ' layers' : ''}; bends tighter than ${pp.R.toFixed(2)} m: ${ev.bendFlags.length}; entries too short: ${ev.entryFlags}; width flags ${ev.faults} (magenta). ` +
+      `Routes ${T.routes} (${T.cables} cables). ${rowsLine(T)}Track contacts ${T.road_crossings} (crossings or edge grazes; track mask +/-2-6 m); true crossings ${T.true_crossings}, ducted. Rows, gaps, tracks and stations estimated from Esri imagery (2025-03-29); inverters, holes, piles, sections assumed. Derating NOT assessed. ` + (extra || ''));
   }
 
   function redraw() {
@@ -394,12 +405,13 @@
     return redraw();
   }
   // PRIVATE layer: only with ?private=1 AND a local server (localhost / 127.0.0.1); the file is never shipped with the page
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   async function loadPrivate() {
     try {
       const qs = new URLSearchParams(location.search), local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
       if (qs.get('private') !== '1' || !local || priv) return;
       const r = await fetch(qs.get('privsrc') || BASE + 'sld-layer.json'); if (!r.ok) return; priv = await r.json();
-      const b = document.createElement('button'); b.textContent = 'Private: SLD'; b.id = 'act-priv'; b.onclick = () => showBox(`<b>PRIVATE layer (local only): ${priv.source}</b><div>${priv.sld.stations_count} stations, ${priv.sld.inverters} inverters; model ${priv.model.bunds_seen} bunds x ${priv.model.per_bund} = ${priv.model.inverters}. ${priv.matching}.</div><table border="1" style="font:11px monospace;border-collapse:collapse"><tr><th>SLD station</th><th>area</th><th>feeder</th><th>inverters</th><th>per bus</th></tr>${priv.sld.stations.map(s => `<tr><td>${s.id}</td><td>${s.area}</td><td>${s.feeder}</td><td>${s.inverters}</td><td>${(s.per_bus || []).join(' / ')}</td></tr>`).join('')}</table>`);
+      const b = document.createElement('button'); b.textContent = 'Private: SLD'; b.id = 'act-priv'; b.onclick = () => showBox(`<b>PRIVATE layer (local only): ${esc(priv.source)}</b><div>${priv.sld.stations_count} stations, ${priv.sld.inverters} inverters; model ${priv.model.bunds_seen} bunds x ${priv.model.per_bund} = ${priv.model.inverters}. ${priv.matching}.</div><table border="1" style="font:11px monospace;border-collapse:collapse"><tr><th>SLD station</th><th>area</th><th>feeder</th><th>inverters</th><th>per bus</th></tr>${priv.sld.stations.map(s => `<tr><td>${s.id}</td><td>${s.area}</td><td>${s.feeder}</td><td>${s.inverters}</td><td>${(s.per_bus || []).join(' / ')}</td></tr>`).join('')}</table>`);
       if (panel) panel.appendChild(b);
     } catch (e) { priv = null; }
   }
@@ -424,7 +436,7 @@
     if (!window.SIM || !window.SIM.map) return setTimeout(init, 200);
     const S = window.SIM, b = S.addButton('AC trenches', () => toggle(b)); b.id = 'act-btn';
     S.map.on('style.load', () => setTimeout(() => { addPlan(S.map); ensureWire(S.map); }, 50)); S.map.on('moveend', labelView);
-    window.__acTrenches = { jamBand, clearance, ductCheck, pickDuct, params, width, layersFor, evaluate, planGeo, holesOf, sectionOf, sectionSVG, partial, pilesOf,
+    window.__acTrenches = { rowsLine, jamBand, clearance, ductCheck, pickDuct, params, width, layersFor, evaluate, planGeo, holesOf, sectionOf, sectionSVG, partial, pilesOf,
       toggle: () => toggle(b), select: (i, s) => { if (i) inst = i; if (s) sides = String(s); return redraw(); }, set: (i, od, mbr) => { if (od) P[i].od = od; if (mbr) P[i].mbr = mbr; return redraw(); },
       animate, stepIn, showSection, table, focus: i => { focus = i; return redraw(); },
       state: () => ({ on, inst, sides, loaded: !!doc, priv: !!priv, P: JSON.parse(JSON.stringify(P)), anim: anim ? { t: anim.t, done: anim.done, si: anim.si } : null, wires: wires.map(w => ({ kind: w.kind, n: w.n })) }), doc: () => doc };
