@@ -79,7 +79,8 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   check('DSM waited the gap after the DTM', ea.length === 2 && ea[1].at - ea[0].at >= 2900, ea.length === 2 ? `${ea[1].at - ea[0].at} ms` : '-');
   check('one 2,048 m box per product', ea.every(x => { const E = x.u.match(/E\((\d+),(\d+)\)/); return E && +E[2] - +E[1] === 2048 && +E[1] % 2048 === 0; }), ea.map(x => (x.u.match(/E\([^)]*\)/) || [''])[0]).join(' '));
   const gr = bl.find(x => x.kind === 'ground'), ab = bl.find(x => x.kind === 'above-ground');
-  check('ground wire: 8 m grid over the tile, measured', gr && gr.n === 2 * 256 * 255 && gr.prov === 'measured', JSON.stringify(gr));
+  const gh = bl.find(x => x.kind === 'ground' && x.style === 'ghost'), gAll = bl.filter(x => x.kind === 'ground').reduce((s, x) => s + x.segs, 0);
+  check('ground wire: 8 m grid over the tile, measured solid (+ any near-lifted ghost)', gr && gAll === 2 * 256 * 255 && gr.prov === 'measured' && gr.style === 'solid' && (!gh || (gh.prov === 'estimated' && gh.n === 4 * gh.segs)), JSON.stringify(gr) + ' ghost ' + (gh ? `${gh.segs} segs, ${gh.lifted} nodes` : 'none'));
   check('above-ground posts: the 40 m block (derived)', ab && ab.prov === 'derived' && ab.n / 5 >= 25 && ab.n / 5 <= 36, JSON.stringify(ab));
   check('anchored near the tile centre (real lat/lon)', gr && Math.abs(gr.lat - 52.25) < 0.03 && Math.abs(gr.lon + 1.05) < 0.03, gr ? `${gr.lat} ${gr.lon}` : '-');
   check('receipt on screen with sha256 and licence', /sha256\(cells\) [0-9a-f]{64}/.test(rc) && /Open Government Licence v3\.0/.test(rc) && /Environment Agency/.test(rc), rc.slice(0, 200));
@@ -206,9 +207,16 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   // ground by >= 3 m everywhere except the last 50 m before the node; otherwise ambiguous (counted, not asserted).
   // Drawn = the 3x3 pixels round the node differ from the same view with the layer off. RIDGE_BIAS overrides the
   // module's DEPTH_BIAS in the served copy only (for the bias search).
-  {
+  // NEAR (r6), on a second page: guards the reason DEPTH_BIAS exists (r3). The map DEM is set 2 m ABOVE the DTM
+  // fixture (the r3 case: coarse DEM over 1 m DTM). The camera stands in the Walk pose on the front (east) slope,
+  // about 2 m above measured ground, at grazing pitch, looking up at the crest. Nodes 20-300 m away are classed
+  // VISIBLE when the sight line clears the DTM by >= 3 m over its middle 80 % (the camera end is at eye height and
+  // the node end is on the ground, so both ends are left out); >= 95 % of them must be drawn, each class alone
+  // against a layer-off shot as above. The rest (the foreground, which cannot clear 3 m from eye height) is drawn
+  // alone too and REPORTED, not asserted. RIDGE_DEM_OFF overrides the 2 m (e.g. 0.001 for the DEM = DTM control).
+  for (const NEAR of [false, true]) {
     const BNG = await import(pathToFileURL(path.join(ROOT, 'world', 'bng.mjs')).href);
-    const RT = { e0: 374784, n0: 243712 }, RE = RT.e0 + 500, RIDGE = (e) => 50 + 180 * Math.exp(-((e - RE) ** 2) / (2 * 250 * 250));
+    const RT = { e0: 374784, n0: 243712 }, RE = RT.e0 + 500, DEM_OFF = NEAR ? +(process.env.RIDGE_DEM_OFF || 2) : 0, RIDGE = (e) => 50 + 180 * Math.exp(-((e - RE) ** 2) / (2 * 250 * 250));
     const realSat = process.env.RIDGE_REAL_SAT === '1', bias = process.env.RIDGE_BIAS;
     const zlib = require('zlib'), crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
     const crc = b => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
@@ -219,7 +227,7 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
     const ll = (z, x, y) => ({ lon: x / 2 ** z * 360 - 180, lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / 2 ** z))) * 180 / Math.PI });
     const demTile = (z, x, y) => { const c = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([i, j]) => { const g = ll(z, x + i, y + j); return BNG.wgs84ToBng(g.lat, g.lon); });
       return png((px, py) => { const u = (px + 0.5) / 256, v = (py + 0.5) / 256, e = (1 - v) * ((1 - u) * c[0].e + u * c[1].e) + v * ((1 - u) * c[2].e + u * c[3].e);
-        const h = Math.round((z < 9 ? 50 : RIDGE(e)) * 256) + 32768 * 256; return [(h >> 16) & 255, (h >> 8) & 255, h & 255]; }); };
+        const h = Math.round((z < 9 ? 50 : RIDGE(e) + DEM_OFF) * 256) + 32768 * 256; return [(h >> 16) & 255, (h >> 8) & 255, h & 255]; }); };
     const grey = png(() => [128, 128, 128]);
     const q = await b.newPage({ viewport: { width: 1280, height: 800 } }), rErr = [];
     q.on('pageerror', e => rErr.push(e.message));
@@ -240,37 +248,40 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
     await q.evaluate(() => window.__lidarStream.arrive('ridge check'));
     await q.waitForFunction(() => /DTM receipt/.test(window.__lidarStream.receipt()) && window.__lidarStream.blocks().some(b => b.kind === 'ground'), null, { timeout: 60000 });
     // Walker 1.4 km east of the crest, looking west across it: move the centre until the CAMERA stands there.
-    const cam = BNG.bngToWgs84(RT.e0 + 1900, RT.n0 + 1024);
-    await q.evaluate(async ([la, lo]) => { const m = window.SIM.map; let c = [lo - 0.004, la];
-      for (let k = 0; k < 4; k++) { m.jumpTo({ center: c, zoom: 17.2, pitch: 84, bearing: 270 }); m._elevationFreeze = false; m.triggerRepaint();
-        await new Promise(r => setTimeout(r, 1500)); const p = m.transform.getCameraPosition().lngLat; c = [c[0] + lo - p.lng, c[1] + la - p.lat]; } }, [cam.lat, cam.lon]);
+    // NEAR: the walker stands 800 m east of the crest, at the foot of the front slope, looking up it. Zoom is solved for
+    // 2 m over the DTM, with the page's maxZoom raised 20 -> 22 on this test page only (at z20 the camera cannot get below ~10 m).
+    const camE = NEAR ? RE + 800 : RT.e0 + 1900, cam = BNG.bngToWgs84(camE, RT.n0 + 1024), camTarget = NEAR ? RIDGE(camE) + 2 : null;
+    await q.evaluate(async ([la, lo, tH]) => { const m = window.SIM.map; if (tH) m.setMaxZoom(22); let c = [lo - (tH ? 0.0003 : 0.004), la], z = tH ? 20 : 17.2, pt = tH ? Math.min(85, m.getMaxPitch()) : 84;
+      for (let k = 0; k < (tH ? 7 : 4); k++) { m.jumpTo({ center: c, zoom: z, pitch: pt, bearing: 270 }); m._elevationFreeze = false; m.triggerRepaint();
+        await new Promise(r => setTimeout(r, 1500)); const cp = m.transform.getCameraPosition(), p = cp.lngLat, E = m.transform.elevation || 0;
+        c = [c[0] + lo - p.lng, c[1] + la - p.lat]; if (tH) z = Math.min(m.getMaxZoom(), tH - E > 0.05 && cp.altitude - E > 0.05 ? z + Math.log2((cp.altitude - E) / (tH - E)) : m.getMaxZoom()); } }, [cam.lat, cam.lon, camTarget]);
     await q.evaluate(() => new Promise(r => { const m = window.SIM.map; setTimeout(() => { m.once('idle', r); m.triggerRepaint(); setTimeout(r, 12000); }, 1500); }));
     await q.waitForTimeout(2000);
-    const tag = `${realSat ? 'sat-live' : 'grey'}-bias${bias || 'module'}`;
+    const tag = `${NEAR ? `near-dem+${DEM_OFF}-` : ''}${realSat ? 'sat-live' : 'grey'}-bias${bias || 'module'}`;
     await q.screenshot({ path: path.join(OUT, `stream-7-ridge-${tag}.png`) });
     // Classify (full wire on the map), then draw ONE class at a time: with the whole mesh drawn, a node behind the crest
     // projects onto pixels the front slope's own wire already lights, so a per-pixel check cannot tell them apart.
-    const rs = await q.evaluate(() => {
+    const rs = await q.evaluate((NEAR) => {
       const m = window.SIM.map, T = m.transform, M = T.customLayerMatrix(), E = T.elevation || 0, cp = T.getCameraPosition(), PF = window.SIM.PF || window.__pf.PF, LS = window.__lidarStream;
       const W = m.getCanvas().clientWidth, H = m.getCanvas().clientHeight, cb = PF.toBng(cp.lngLat.lat, cp.lngLat.lng), camH = cp.altitude;
       const proj = (x, y, z) => { const w = M[3] * x + M[7] * y + M[11] * z + M[15]; return w <= 0 ? null : [(M[0] * x + M[4] * y + M[8] * z + M[12]) / w, (M[1] * x + M[5] * y + M[9] * z + M[13]) / w]; };
-      const st = { E: +E.toFixed(1), camAlt: +camH.toFixed(1), hidden: 0, visible: 0, ambiguous: 0, subPixel: 0, minHidden: 1e9 }, cls = { hidden: [], visible: [] }, segs = { hidden: [], visible: [] };
+      const st = { E: +E.toFixed(1), camAlt: +camH.toFixed(1), camOverDtm: +(camH - LS.heightAt(cb.e, cb.n).h).toFixed(2), hidden: 0, visible: 0, ambiguous: 0, subPixel: 0, minHidden: 1e9 }, cls = { hidden: [], visible: [], ambiguous: [] }, segs = { hidden: [], visible: [], ambiguous: [] };
       const ground = [...LS.tiles.values()].flatMap(t => t.blks || []).filter(b => b.kind === 'ground');
       ground.forEach((bk, bi) => { const o = maplibregl.MercatorCoordinate.fromLngLat([bk.anchor.lon, bk.anchor.lat], bk.gz + (bk.E || 0) - E);
-        for (let v = 0; v < bk.buf.length / 3; v += 13) { const i = 3 * v, j = 3 * (v ^ 1), x = bk.buf[i] + o.x, y = bk.buf[i + 1] + o.y, z = bk.buf[i + 2] + o.z;
+        for (let v = 0; v < bk.buf.length / 3; v += NEAR ? 2 : 13) { const i = 3 * v, j = 3 * (v ^ 1), x = bk.buf[i] + o.x, y = bk.buf[i + 1] + o.y, z = bk.buf[i + 2] + o.z;
           const P = proj(x, y, z); if (!P || Math.abs(P[0]) > 0.98 || Math.abs(P[1]) > 0.98) continue;
           const ll = new maplibregl.MercatorCoordinate(x, y, 0).toLngLat(), nb = PF.toBng(ll.lat, ll.lng), nh = LS.heightAt(nb.e, nb.n).h; if (nh == null) continue;
-          const d = Math.hypot(nb.e - cb.e, nb.n - cb.n); if (d < 1000) continue;
+          const d = Math.hypot(nb.e - cb.e, nb.n - cb.n); if (NEAR ? d < 20 || d > 300 : d < 1000) continue;
           const Q = proj(bk.buf[j] + o.x, bk.buf[j + 1] + o.y, bk.buf[j + 2] + o.z); if (!Q || Math.hypot((P[0] - Q[0]) * W / 2, (P[1] - Q[1]) * H / 2) < 1) { st.subPixel++; continue; }
-          let up = -1e9, upFar = -1e9; for (let s = 1; s < 200; s++) { const f = s / 200, h = LS.heightAt(cb.e + (nb.e - cb.e) * f, cb.n + (nb.n - cb.n) * f).h; if (h == null) continue; const x2 = h - (camH + (nh - camH) * f); up = Math.max(up, x2); if ((1 - f) * d > 50) upFar = Math.max(upFar, x2); }
-          const k = up > 3 ? 'hidden' : upFar <= -3 ? 'visible' : null; if (!k) { st.ambiguous++; continue; }
+          let up = -1e9, upFar = -1e9; for (let s = 1; s < 200; s++) { const f = s / 200, h = LS.heightAt(cb.e + (nb.e - cb.e) * f, cb.n + (nb.n - cb.n) * f).h; if (h == null) continue; const x2 = h - (camH + (nh - camH) * f); up = Math.max(up, x2); if (NEAR ? f >= 0.1 && f <= 0.9 : (1 - f) * d > 50) upFar = Math.max(upFar, x2); }
+          const k = up > 3 ? 'hidden' : upFar <= -3 ? 'visible' : null; if (!k) { st.ambiguous++; cls.ambiguous.push([(P[0] + 1) / 2, (1 - P[1]) / 2]); segs.ambiguous.push([bi, Math.min(v, v ^ 1)]); continue; }
           st[k]++; if (k === 'hidden') st.minHidden = Math.min(st.minHidden, Math.round(d));
           cls[k].push([(P[0] + 1) / 2, (1 - P[1]) / 2]); segs[k].push([bi, Math.min(v, v ^ 1)]); } });
       const keep = ground.map(b => b.buf);
       window.__ridgeShow = k => { const impl = m.style._layers['lidar-stream-sat'].implementation; impl.vbo = new WeakMap();
         ground.forEach((b, bi) => { if (!k) { b.buf = keep[bi]; return; } const s = segs[k].filter(x => x[0] === bi), f = new Float32Array(s.length * 6);
           s.forEach(([, v], n) => f.set(keep[bi].subarray(3 * v, 3 * v + 6), 6 * n)); b.buf = f; }); m.triggerRepaint(); };
-      window.__ridgeCls = cls; return st; });
+      window.__ridgeCls = cls; return st; }, NEAR);
     const litRate = async (k) => {
       await q.evaluate(k => window.__ridgeShow(k), k); await q.waitForTimeout(1200);
       const A = await q.screenshot({ path: path.join(OUT, `stream-7-ridge-${tag}-only-${k}.png`) });
@@ -284,10 +295,12 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
         const lit = (px, py) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = px + dx, y = py + dy; if (x < 0 || y < 0 || x >= W || y >= H) continue; const i = 4 * (y * W + x); if (Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]) > 24) return true; } return false; };
         return window.__ridgeCls[k].filter(([u, v]) => lit(Math.round(u * W), Math.round(v * H))).length; }, [A.toString('base64'), B.toString('base64'), k]);
     };
-    rs.hiddenDrawn = await litRate('hidden'); rs.visibleDrawn = await litRate('visible');
+    rs.hiddenDrawn = await litRate('hidden'); rs.visibleDrawn = await litRate('visible'); if (NEAR) rs.ambiguousDrawn = await litRate('ambiguous');
     await q.evaluate(() => window.__ridgeShow(null));
     const hr = rs.hidden ? rs.hiddenDrawn / rs.hidden : 1, vr = rs.visible ? rs.visibleDrawn / rs.visible : 0;
     console.log('RIDGE', tag, gpu.slice(0, 70), JSON.stringify(rs));
+    if (NEAR) { check(`near wire, DEM ${DEM_OFF} m over DTM: visible nodes 20-300 m drawn >= 95 % (bias ${bias || 'module'})`, rs.visible >= 50 && vr >= 0.95, `${rs.visibleDrawn}/${rs.visible} = ${(100 * vr).toFixed(1)} %; hidden drawn ${rs.hiddenDrawn}/${rs.hidden}; REPORTED, not asserted: nodes that do not clear 3 m (the foreground) drawn ${rs.ambiguousDrawn}/${rs.ambiguous}; camera ${rs.camOverDtm} m over DTM, E ${rs.E} m`);
+      check('near page: no page errors', rErr.length === 0, rErr.join(' | ') || 'none'); await q.close(); continue; }
     check(`ridge: hidden nodes >= 1 km drawn <= 1 % (${realSat ? 'live satellite' : 'grey fixture imagery'})`, rs.hidden >= 200 && hr <= 0.01, `${rs.hiddenDrawn}/${rs.hidden} = ${(100 * hr).toFixed(2)} %; nearest hidden ${rs.minHidden} m`);
     check(`ridge: visible nodes >= 1 km (>= 1 px) drawn >= 80 % (${realSat ? 'live satellite' : 'grey fixture imagery'})`, rs.visible >= 50 && vr >= 0.8, `${rs.visibleDrawn}/${rs.visible} = ${(100 * vr).toFixed(1)} %; sub-pixel skipped ${rs.subPixel}, ambiguous ${rs.ambiguous}; camera ${rs.camAlt} m, E ${rs.E} m`);
     check('ridge page: no page errors', rErr.length === 0, rErr.join(' | ') || 'none');

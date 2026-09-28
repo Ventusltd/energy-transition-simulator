@@ -55,6 +55,7 @@
       L.push(`${k.toUpperCase()} receipt ${r.sha.slice(0, 12)}: ${r.src.product}, ${r.src.release}; survey year not read yet, so these heights count as pre-construction ground (R5 rule 9); ` +
         `box E ${r.box.e0}-${r.box.e1} N ${r.box.n0}-${r.box.n1}; fetched ${r.at}; ${(r.valid * 100).toFixed(1)}% cells measured; sha256(cells) ${r.sha}`);
     }
+    if (t.lifted) L.push(`Near the walker (${LIFT_M} m): ${t.lifted} nodes lie under the coarser map DEM and are drawn at the DEM surface, DOTTED (estimated); solid = measured height.`);
     if (t.objects != null) L.push(`Above ground (DSM - DTM > ${ABOVE_M} m, derived): ${t.objects} posts on the ${STEP} m grid.`);
     L.push(`Placed by ${t.engine || eng || 'place-frame'}. ${R5 ? R5.LICENCE : ''} Source: Environment Agency.`);
     panel().textContent = L.join('\n');
@@ -116,6 +117,12 @@
     return { nodes: out.length, maxAbsD: Math.max(...D), meanD: out.reduce((s, o) => s + o.D, 0) / (out.length || 1),
       demNodes: dm.length, maxAbsDemD: M.length ? Math.max(...M) : null, meanDemD: dm.length ? dm.reduce((s, o) => s + o.demD, 0) / dm.length : null, receipt: out[0] && out[0].receipt, exaggeration, sample: out.slice(0, 3) };
   }
+  // The walker: the camera's ground point in BNG (Walk and Drone stand the camera there), or null before a map frame.
+  const LIFT_M = 150, DOTS = 4, LIFT_CLEAR = 0.25; // 0.25 m over the DEM: a line lying exactly on the DEM mesh z-fights it (seen r8)
+  function walker() {
+    const T = window.SIM.map.transform, cp = T.getCameraPosition && T.getCameraPosition();
+    if (!cp || !cp.lngLat) return null; const g = PF().toBng(cp.lngLat.lat, cp.lngLat.lng); return { e: g.e, n: g.n };
+  }
   function draw(key) {
     const t = tiles.get(key), S = window.SIM, P = PF();
     S.removeWhere(b => b.lidarStream === key); if (t) t.blks = [];
@@ -131,18 +138,38 @@
     const gz = terrainAt(f.anchor.lon, f.anchor.lat), E = elevNow(), base = gz + E;
     const H = new Float32Array(N * N), seg = new Int32Array(N * N).fill(-1);
     for (let b = 0; b < N; b++) for (let a = 0; a < N; a++) H[b * N + a] = hAt(t.dtm, a * STEP + STEP / 2, b * STEP + STEP / 2);
-    const X = (a, b) => { const c = STEP / 2, p = f.xy(t.tile.e0 + a * STEP + c + 0.5, t.tile.n0 + b * STEP + c + 0.5); return [p[0], p[1], H[b * N + a] - base]; };
-    const L = [];
+    // NEAR LIFT (r8): within LIFT_M of the walker, a node the map DEM covers is drawn at max(DTM, DEM), because the
+    // coarse DEM mesh sits up to ~2 m over the 1 m DTM there and at eye height no depth bias can see under it (r6, r7).
+    // (plus LIFT_CLEAR, so the lifted line is not coplanar with the DEM mesh)
+    // Every segment touching a lifted node is ESTIMATED (drawn at the DEM, not where it was measured), so it goes to a
+    // separate ghost block drawn DOTTED; nodes at their measured height stay in the solid measured block.
+    const Z = new Float32Array(H), lift = new Uint8Array(N * N), wk = walker(); let nLift = 0;
+    if (wk) {
+      const a0 = Math.max(0, Math.floor((wk.e - t.tile.e0 - LIFT_M) / STEP)), a1 = Math.min(N - 1, Math.ceil((wk.e - t.tile.e0 + LIFT_M) / STEP));
+      const b0 = Math.max(0, Math.floor((wk.n - t.tile.n0 - LIFT_M) / STEP)), b1 = Math.min(N - 1, Math.ceil((wk.n - t.tile.n0 + LIFT_M) / STEP));
+      for (let b = b0; b <= b1; b++) for (let a = a0; a <= a1; a++) {
+        const k = b * N + a, e = t.tile.e0 + a * STEP + STEP / 2 + 0.5, n = t.tile.n0 + b * STEP + STEP / 2 + 0.5;
+        if (!Number.isFinite(H[k]) || Math.hypot(e - wk.e, n - wk.n) > LIFT_M) continue;
+        const g = P.fromBng(e, n), d = demAt(g.lon, g.lat);
+        if (d != null && d + LIFT_CLEAR > H[k]) { Z[k] = Math.max(H[k], d + LIFT_CLEAR); lift[k] = 1; nLift++; }
+      }
+    }
+    const X = (a, b) => { const c = STEP / 2, p = f.xy(t.tile.e0 + a * STEP + c + 0.5, t.tile.n0 + b * STEP + c + 0.5); return [p[0], p[1], Z[b * N + a] - base]; };
+    const L = [], G = []; let gSegs = 0;
+    const ghost = (p, q) => { gSegs++; for (let s = 0; s < DOTS; s++) { const u = s / DOTS, v = (s + 0.5) / DOTS; // dotted: half of each 1/DOTS step drawn
+      G.push([p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u, p[2] + (q[2] - p[2]) * u, p[0] + (q[0] - p[0]) * v, p[1] + (q[1] - p[1]) * v, p[2] + (q[2] - p[2]) * v]); } };
     for (let b = 0; b < N; b++) for (let a = 0; a < N; a++) {
-      if (!Number.isFinite(H[b * N + a])) continue; const p = X(a, b), k0 = L.length;
-      if (a + 1 < N && Number.isFinite(H[b * N + a + 1])) { const q = X(a + 1, b); L.push([p[0], p[1], p[2], q[0], q[1], q[2]]); }
-      if (b + 1 < N && Number.isFinite(H[(b + 1) * N + a])) { const q = X(a, b + 1); L.push([p[0], p[1], p[2], q[0], q[1], q[2]]); }
+      if (!Number.isFinite(H[b * N + a])) continue; const p = X(a, b), k0 = L.length, lp = lift[b * N + a];
+      if (a + 1 < N && Number.isFinite(H[b * N + a + 1])) { const q = X(a + 1, b); if (lp || lift[b * N + a + 1]) ghost(p, q); else L.push([p[0], p[1], p[2], q[0], q[1], q[2]]); }
+      if (b + 1 < N && Number.isFinite(H[(b + 1) * N + a])) { const q = X(a, b + 1); if (lp || lift[(b + 1) * N + a]) ghost(p, q); else L.push([p[0], p[1], p[2], q[0], q[1], q[2]]); }
       if (L.length > k0) seg[b * N + a] = k0;
     }
-    t.gz = gz; t.E = E; t.H = H; t.seg = seg; t.N = N; t.anchor = f.anchor;
+    t.gz = gz; t.E = E; t.H = H; t.seg = seg; t.N = N; t.anchor = f.anchor; t.wk = wk; t.lifted = nLift;
     t.blks.push({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: L, buf: P.wireBuffer(f.anchor, L), lidarStream: key,
       prov: 'measured', receipt: t.dtm.sha, kind: 'ground', gz, E });
-    t.segs = L.length;
+    if (G.length) t.blks.push({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: G, buf: P.wireBuffer(f.anchor, G), lidarStream: key,
+      prov: 'estimated', style: 'ghost', segs: gSegs, receipt: t.dtm.sha, kind: 'ground', lifted: nLift, gz, E });
+    t.segs = L.length + gSegs;
     if (t.dsm && !t.dsm.none && !t.dsm.pending) {
       const O = []; let n = 0;
       for (let b = 0; b < N; b++) for (let a = 0; a < N; a++) {
@@ -173,6 +200,12 @@
   // every line stays exactly where it was measured on screen); in metres it grows with distance, and hills still hide.
   // r5: 0.0006 let 60/3,993 nodes behind a synthetic 180 m ridge show at the crest (1.5 %); 0.0005 draws 2 (0.05 %),
   // with 2,288/2,301 visible far nodes still drawn (tests/lidar-stream.cjs, ridge check).
+  // r6 (near check, DEM 2 m over DTM, eye ~3.4 m over DTM): nodes 20-300 m that clear the DTM by >= 3 m are all drawn
+  // (70/70 at 0.0004-0.0006, 0/70 with no bias), but only ~56 % of the foreground (716/1,274) is drawn at 0.0005: a
+  // constant NDC bias is a few cm near the eye, so the nearest wire under a raised DEM is still lost (fixed r8: NEAR LIFT).
+  // r7: a metric pull (depth taken 2.5 m toward the eye, x/y unpulled) was tried and REVERTED: ridge 0/3,993 hidden and
+  // 2,285/2,301 visible, but near 0/70 visible and 0/1,274 foreground. At eye height the ray meets a DEM 2 m high tens
+  // of metres before the node, so any fixed pull along the ray is far too short; the fix is geometry, not depth.
   const SAT_ALPHA = 0.35, sat = [], DEPTH_BIAS = 0.0005;
   const satMode = () => { const m = window.SIM.map; return !!(m.getSource && m.getSource('sat')); };
   const layer = { id: 'lidar-stream-sat', type: 'custom', renderingMode: '3d',
@@ -290,7 +323,8 @@
     const inf = document.getElementById('info'); if (inf && window.MutationObserver) new MutationObserver(place).observe(inf, { childList: true, characterData: true, subtree: true });
     addEventListener('resize', place); setInterval(place, 1000); // captions come and go (the 8 s note); cheap
     addEventListener('keydown', e => { if (e.key === 'Escape' && open) setOpen(false); });
-    S.map.on('idle', () => { for (const [k, t] of tiles) if (t.H && (Math.abs(terrainAt(t.anchor.lon, t.anchor.lat) - t.gz) > 0.01 || Math.abs(elevNow() - (t.E || 0)) > 0.01)) draw(k); });
+    S.map.on('idle', () => { for (const [k, t] of tiles) { const w = walker(), moved = w && (!t.wk || Math.hypot(w.e - t.wk.e, w.n - t.wk.n) > STEP);
+      if (t.H && (moved || Math.abs(terrainAt(t.anchor.lon, t.anchor.lat) - t.gz) > 0.01 || Math.abs(elevNow() - (t.E || 0)) > 0.01)) draw(k); } });
     S.map.on('moveend', () => { if (arriving) { arriving = false; arrive('find or go'); } });
     for (const [id, w] of [['walk', 'Walk'], ['drone', 'Drone'], ['here', 'Build here']]) {
       const el = document.getElementById(id); if (el) el.addEventListener('click', () => setTimeout(() => arrive(w), 1200));
@@ -303,7 +337,7 @@
       segs: () => [...tiles.values()].flatMap(t => t.blks || []).reduce((s, b) => s + b.lines.length, 0),
       layer: () => ({ satellite: satMode(), own: sat.length, inWire: S.blocks.filter(b => b.lidarStream).length, alpha: SAT_ALPHA, onMap: !!S.map.getLayer(layer.id) }),
       line: () => { panel(); return { text: line.textContent, rect: line.getBoundingClientRect().toJSON(), open }; }, setOpen, place,
-      blocks: () => [...tiles.values()].flatMap(t => t.blks || []).map(b => ({ kind: b.kind, prov: b.prov, receipt: b.receipt, lat: b.lat, lon: b.lon, n: b.lines.length })),
+      blocks: () => [...tiles.values()].flatMap(t => t.blks || []).map(b => ({ kind: b.kind, prov: b.prov, style: b.style || 'solid', segs: b.segs || b.lines.length, lifted: b.lifted || 0, receipt: b.receipt, lat: b.lat, lon: b.lon, n: b.lines.length })),
       receipt: () => panel().textContent  // the full receipt (shown on click)
     };
   });
