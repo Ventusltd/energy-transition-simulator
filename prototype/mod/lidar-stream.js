@@ -173,6 +173,9 @@
   // every line stays exactly where it was measured on screen); in metres it grows with distance, and hills still hide.
   // r5: 0.0006 let 60/3,993 nodes behind a synthetic 180 m ridge show at the crest (1.5 %); 0.0005 draws 2 (0.05 %),
   // with 2,288/2,301 visible far nodes still drawn (tests/lidar-stream.cjs, ridge check).
+  // r6 (near check, DEM 2 m over DTM, eye ~3.4 m over DTM): nodes 20-300 m that clear the DTM by >= 3 m are all drawn
+  // (70/70 at 0.0004-0.0006, 0/70 with no bias), but only ~56 % of the foreground (716/1,274) is drawn at 0.0005: a
+  // constant NDC bias is a few cm near the eye, so the nearest wire under a raised DEM is still lost. Not fixed here.
   const SAT_ALPHA = 0.35, sat = [], DEPTH_BIAS = 0.0005;
   const satMode = () => { const m = window.SIM.map; return !!(m.getSource && m.getSource('sat')); };
   const layer = { id: 'lidar-stream-sat', type: 'custom', renderingMode: '3d',
