@@ -41,7 +41,7 @@ const results = []; const check = (name, ok, evidence) => { results.push({ name,
 async function launch() {
   if (process.env.UI_LAUNCHER) return require(process.env.UI_LAUNCHER).launch();
   const { chromium } = require('playwright');
-  return chromium.launch({ channel: 'chrome', args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
+  return chromium.launch({ channel: process.env.CI ? undefined : 'chrome', args: process.env.CI ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
 }
 const state = p => p.evaluate(() => window.SIM.plan.state());
 async function ready(p) {
