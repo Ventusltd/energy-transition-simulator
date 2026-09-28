@@ -61,6 +61,13 @@
     // column index by walking the distinct u values (gaps measured locally, so the step's rounding never drifts across the farm)
     const us = [...new Set(P.map(p => +p.u.toFixed(2)))].sort((a, b) => a - b), colOf = new Map(); let ci = 0;
     let uc = us[0]; us.forEach(u => { if (u - uc > step * 0.5) { ci += Math.max(1, Math.round((u - uc) / step)); uc = u; } colOf.set(u, ci); });
+    // each column's REAL position (median of its distinct u), interpolated for fractional and missing columns: never u0 + c * step,
+    // whose nominal step drifts metres across the farm in the page's frame
+    const byCol = new Map(); us.forEach(u => { const c = colOf.get(u); (byCol.get(c) || byCol.set(c, []).get(c)).push(u); });
+    const kc = [...byCol.keys()].sort((p, q) => p - q), ku = kc.map(c => median(byCol.get(c))), kn = kc.length - 1;
+    const colU = c => { if (c <= kc[0]) return ku[0] + (c - kc[0]) * step; if (c >= kc[kn]) return ku[kn] + (c - kc[kn]) * step;
+      let lo = 0, hi = kn; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (kc[m] <= c) lo = m; else hi = m; }
+      return ku[lo] + (c - kc[lo]) * (ku[hi] - ku[lo]) / (kc[hi] - kc[lo]); };
     const occ = new Map();                                     // vi -> Set of ci
     for (const p of P) { const ci = colOf.get(+p.u.toFixed(2)); for (let vi = Math.floor(p.v0 / CELL); vi <= Math.floor(p.v1 / CELL); vi++) (occ.get(vi) || occ.set(vi, new Set()).get(vi)).add(ci); }
     const vis = [...occ.keys()].sort((a, b) => a - b), open = [], done = [];
@@ -94,18 +101,18 @@
       const good = r.cells.filter(c => c.good), src = good.length ? good : r.cells;
       const cc = median(src.map(c => (c.c0 + c.c1) / 2)), n = Math.round(median(src.map(c => c.c1 - c.c0))) + 1, v0 = r.first * CELL, v1 = (r.last + 1) * CELL - SHADOW_TRIM_M;   // north end of a thresholded mask is long by the shadow reach
       if (n < minCols) { dropped.narrow++; continue; } if (v1 - v0 < minLen) { dropped.short++; continue; }
-      rows.push({ u: u0 + cc * step, v0, v1, cols: n, cells: r.cells, nGood: good.length, nBridged: r.cells.filter(c => c.bridged).length });
+      rows.push({ u: colU(cc), v0, v1, cols: n, cells: r.cells, nGood: good.length, nBridged: r.cells.filter(c => c.bridged).length });
     }
     rows.sort((a, b) => a.u - b.u || a.v0 - b.v0);
     const d = []; for (let i = 1; i < rows.length; i++) for (let j = i - 1; j >= 0 && rows[i].u - rows[j].u < 40; j--) { const g = rows[i].u - rows[j].u, ov = Math.min(rows[i].v1, rows[j].v1) - Math.max(rows[i].v0, rows[j].v0); if (g > 15 && ov > 10) d.push(g); }
-    return { axis: th, step, rows, dropped, pitch: d.length ? median(d) : null, raster: { occ, u0, step, CELL }, cells: { unbridged: unbridgedCells, partial: partialCells, bridged: bridgedCells } };
+    return { axis: th, step, rows, dropped, pitch: d.length ? median(d) : null, raster: { occ, u0, step, CELL, colU }, cells: { unbridged: unbridgedCells, partial: partialCells, bridged: bridgedCells } };
   }
   const halfWidthOf = s => { const run = s.rows * (s.moduleLength + s.moduleGap) - s.moduleGap; return run * Math.cos(s.tilt * D2R) + s.ridgeGap / 2; };
   // Share of a table's footprint (u +/- halfW, v0 to v0 + span) that lies on measured runs of the raster.
   function coverage(t, raster, halfW) {
-    const { occ, u0, step, CELL } = raster, a = Math.floor(t.v0 / CELL), b = Math.ceil((t.v0 + t.span) / CELL) - 1; let sum = 0, n = 0;
+    const { occ, step, CELL, colU } = raster, a = Math.floor(t.v0 / CELL), b = Math.ceil((t.v0 + t.span) / CELL) - 1; let sum = 0, n = 0;
     for (let vi = a; vi <= b; vi++) { const w = Math.min(t.v0 + t.span, (vi + 1) * CELL) - Math.max(t.v0, vi * CELL); if (w <= 0) continue; n += w; const set = occ.get(vi); if (!set) continue; let cov = 0;
-      for (const c of set) { const uc = u0 + c * step, o = Math.min(uc + step / 2, t.u + halfW) - Math.max(uc - step / 2, t.u - halfW); if (o > 0) cov += o; }
+      for (const c of set) { const uc = colU(c), o = Math.min(uc + step / 2, t.u + halfW) - Math.max(uc - step / 2, t.u - halfW); if (o > 0) cov += o; }
       sum += w * Math.min(1, cov / (2 * halfW)); }
     return n ? sum / n : 0;
   }
@@ -132,7 +139,7 @@
       segs.forEach((g, gi) => {
         let v0 = r.v0, v1 = r.v1, u = r.u;
         if (g.cells) { v0 = g.cells[0].vi * CELL; v1 = Math.min(r.v1, (g.cells[g.cells.length - 1].vi + 1) * CELL);   // the row's north end carries the shadow trim
-          const good = g.cells.filter(c => c.good), src = good.length ? good : g.cells; u = u0 + median(src.map(c => (c.c0 + c.c1) / 2)) * step; }
+          const good = g.cells.filter(c => c.good), src = good.length ? good : g.cells; u = raster.colU(median(src.map(c => (c.c0 + c.c1) / 2))); }
         const L = v1 - v0; if (L < 2 * mw) { dropped.tiny++; return; }
         const n = Math.max(1, Math.ceil(L / spanDefault - 1e-9)), len = L / n;
         for (let k = 0; k < n; k++) { const columns = Math.max(1, Math.floor((len + s.moduleGap) / mw)), span = columns * mw - s.moduleGap;
