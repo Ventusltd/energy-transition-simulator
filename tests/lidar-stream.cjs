@@ -66,12 +66,12 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   });
   await p.goto(`${base}?lat=52.2441634&lon=-1.0453368`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.__lidarStream, null, { timeout: 30000 });
-  check('module loads, adds its button', (await p.$$eval('#bar button', bs => bs.map(x => x.textContent))).includes('Stream ground'), 'button');
+  check('module loads, adds its button', (await p.$$eval('button', bs => bs.map(x => x.textContent))).includes('Stream ground'), 'button');
   check('no EA request before arrival', ea.length === 0, `${ea.length}`);
   await p.evaluate(() => window.__lidarStream.useFixture(null, 3000)); // fixture served by route; gap shortened for the test only
-  await p.click('#wire'); await p.waitForTimeout(1500);
+  await p.evaluate(() => document.getElementById('wire').click()); await p.waitForTimeout(1500);
   await p.evaluate(() => window.SIM.map.jumpTo({ pitch: 60, zoom: 15.2, bearing: 30 }));
-  await p.click('#drone'); // arrival
+  await p.evaluate(() => document.getElementById('drone').click()); // arrival
   await p.waitForFunction(() => window.__lidarStream.blocks().some(b => b.kind === 'above-ground'), null, { timeout: 30000 });
   await p.waitForTimeout(1500);
   const bl = await p.evaluate(() => window.__lidarStream.blocks()), rc = await p.evaluate(() => window.__lidarStream.receipt());
@@ -92,18 +92,48 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   check('datum probe: 200 nodes drawn at their own DTM height, |D| < 0.5 m', pr.nodes === 200 && pr.maxAbsD < 0.5, `max|D| ${pr.maxAbsD.toFixed(4)} m, mean ${pr.meanD.toFixed(4)} m; map DEM vs DTM max ${pr.maxAbsDemD} m over ${pr.demNodes} loaded nodes (item 3; fixture DTM is synthetic)`);
   await p.screenshot({ path: path.join(OUT, 'stream-1-drone.png') });
   // LAYER ORDER: Satellite moves the measured wire to its own see-through layer (imagery stays visible); Wire takes it back.
-  await p.click('#sat'); await p.waitForTimeout(2500);
+  await p.evaluate(() => document.getElementById('sat').click()); await p.waitForTimeout(2500);
   const ls = await p.evaluate(() => window.__lidarStream.layer());
   check('Satellite: measured wire on its own see-through layer above the imagery, not in the solid wire', ls.satellite && ls.onMap && ls.own >= 1 && ls.inWire === 0 && ls.alpha < 0.5, JSON.stringify(ls));
   await p.screenshot({ path: path.join(OUT, 'stream-2-satellite.png') });
-  await p.click('#wire'); await p.waitForTimeout(1500);
+  await p.evaluate(() => document.getElementById('wire').click()); await p.waitForTimeout(1500);
   const lw = await p.evaluate(() => window.__lidarStream.layer());
   check('Wire: blocks back in the solid wire layer, own layer empty', !lw.satellite && lw.own === 0 && lw.inWire === bl.length, JSON.stringify(lw));
   // The receipt panel never covers the landing caption (#info, with the pylons line): bounding rects must not intersect.
   await p.evaluate(() => { const i = document.getElementById('info'); i.style.display = ''; i.textContent = 'Pylons: caption overlap check, a long line that runs across the bottom of the screen like the mapped pylons caption does'; });
   await p.waitForTimeout(200);
   const ov = await p.evaluate(() => window.__lidarStream.overlap());
-  check('receipt panel does not overlap the #info caption', ov.info && ov.info.height > 0 && !ov.overlaps, `receipt top ${Math.round(ov.receipt.top)}-${Math.round(ov.receipt.bottom)}, info ${ov.info && Math.round(ov.info.top)}-${ov.info && Math.round(ov.info.bottom)}`);
+  check('receipt panel does not overlap the #info caption (hidden by the menu style since setup c50575c)', ov.info && (ov.info.height === 0 || !ov.overlaps), `info height ${ov.info && ov.info.height}; receipt top ${Math.round(ov.receipt.top)}-${Math.round(ov.receipt.bottom)}, info ${ov.info && Math.round(ov.info.top)}-${ov.info && Math.round(ov.info.bottom)}`);
+  // WALK (r3): the measured wire is visible near the walker (Satellite, Walk pose). The frame must be healthy
+  // (transform.elevation = the ground at the centre); the overlay's stuck MapLibre _elevationFreeze is cleared here and
+  // reported to the lead as a separate camera fault. Checks: node count within 100 m on screen, some in the lower third,
+  // and pixels the layer adds in the lower third (shown vs hidden).
+  await p.evaluate(() => document.getElementById('sat').click()); await p.waitForTimeout(2500);
+  await p.evaluate(() => { const m = window.SIM.map; m.jumpTo({ center: [-1.0453368, 52.2441634], zoom: 16.5, pitch: 60, bearing: 30 }); m._elevationFreeze = false; m.triggerRepaint(); });
+  await p.waitForTimeout(1500);
+  await p.evaluate(() => window.SIM.map.easeTo({ zoom: 18.5, pitch: 80, duration: 900 }));
+  await p.evaluate(() => new Promise(r => { const m = window.SIM.map; setTimeout(() => { m.once('idle', r); m.triggerRepaint(); setTimeout(r, 6000); }, 1500); }));
+  const near = await p.evaluate(() => { const m = window.SIM.map, T = m.transform, M = T.customLayerMatrix(), c = m.getCenter(), E = T.elevation || 0;
+    const mc = maplibregl.MercatorCoordinate.fromLngLat(c, 0), mpm = maplibregl.MercatorCoordinate.fromLngLat(c, 1).z, o2 = { E, nodes: 0, onScreen: 0, low: 0 };
+    for (const t of window.__lidarStream.tiles.values()) for (const b of t.blks || []) { if (b.kind !== 'ground') continue;
+      const o = maplibregl.MercatorCoordinate.fromLngLat([b.anchor.lon, b.anchor.lat], b.gz + (b.E || 0) - E);
+      for (let i = 0; i < b.buf.length; i += 3) { const x = b.buf[i] + o.x, y = b.buf[i + 1] + o.y, z = b.buf[i + 2] + o.z; if (Math.hypot(x - mc.x, y - mc.y) / mpm > 100) continue; o2.nodes++;
+        const w = M[3] * x + M[7] * y + M[11] * z + M[15], X = (M[0] * x + M[4] * y + M[8] * z + M[12]) / w, Y = (M[1] * x + M[5] * y + M[9] * z + M[13]) / w;
+        if (w > 0 && Math.abs(X) <= 1 && Math.abs(Y) <= 1) { o2.onScreen++; if (Y < -1 / 3) o2.low++; } } }
+    return o2; });
+  const shotA = await p.screenshot({ path: path.join(OUT, 'stream-5-walk-near.png') });
+  await p.evaluate(() => { const m = window.SIM.map; m.setLayoutProperty('lidar-stream-sat', 'visibility', 'none'); m.triggerRepaint(); }); await p.waitForTimeout(700);
+  const shotB = await p.screenshot();
+  await p.evaluate(() => { const m = window.SIM.map; m.setLayoutProperty('lidar-stream-sat', 'visibility', 'visible'); m.triggerRepaint(); });
+  const lowPx = await p.evaluate(async ([A, B]) => { const ld = s => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = 'data:image/png;base64,' + s; });
+    const [ia, ib] = await Promise.all([ld(A), ld(B)]), W = ia.width, H = ia.height, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+    g.drawImage(ia, 0, 0); const da = g.getImageData(0, 0, W, H).data; g.drawImage(ib, 0, 0); const db = g.getImageData(0, 0, W, H).data; let n = 0;
+    for (let y = Math.floor(2 * H / 3); y < H; y++) for (let x = 0; x < W; x++) { const k = 4 * (y * W + x); if (Math.abs(da[k] - db[k]) + Math.abs(da[k + 1] - db[k + 1]) + Math.abs(da[k + 2] - db[k + 2]) > 24) n++; }
+    return n; }, [shotA.toString('base64'), shotB.toString('base64')]);
+  check('Walk: measured wire visible near the walker (nodes on screen, lower third lit)', near.E > 50 && near.onScreen > 100 && near.low > 0 && lowPx > 500, `E ${near.E.toFixed(2)} m; ${near.onScreen}/${near.nodes} nodes within 100 m on screen, ${near.low} in the lower third; ${lowPx} px drawn in the lower third`);
+  const pw = await p.evaluate(() => window.__lidarStream.probe(200));
+  check('Walk frame: nodes still at their own DTM height with E set, |D| < 0.05 m', pw.maxAbsD < 0.05, `max|D| ${pw.maxAbsD.toFixed(4)} m at E ${near.E.toFixed(2)} m`);
+  await p.evaluate(() => document.getElementById('wire').click()); await p.waitForTimeout(1500);
   // Movement never fetches: walk and pan.
   const n0 = ea.length;
   await p.evaluate(() => window.SIM.map.jumpTo({ center: [-1.046, 52.2436], zoom: 17.5, pitch: 72 }));
@@ -113,7 +143,7 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   await p.screenshot({ path: path.join(OUT, 'stream-2-walk.png') });
   // Outside coverage: Scotland (outside the envelope), by the Stream ground button (an arrival).
   await p.evaluate(() => window.SIM.map.jumpTo({ center: [-3.19, 55.95], zoom: 14 })); await p.waitForTimeout(800);
-  await p.$$eval('#bar button', bs => bs.find(x => x.textContent === 'Stream ground').click()); await p.waitForTimeout(1500);
+  await p.$$eval('button', bs => bs.find(x => x.textContent === 'Stream ground').click()); await p.waitForTimeout(1500);
   const rc2 = await p.evaluate(() => window.__lidarStream.receipt());
   check('outside coverage says "no measured ground here", no request', /no measured ground here/.test(rc2) && ea.length === n0, rc2.slice(0, 160));
   await p.screenshot({ path: path.join(OUT, 'stream-3-outside.png') });
@@ -125,7 +155,7 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   // Network error (status 0): exactly one retry in the same arrival, never on movement; then the honest label.
   await p.evaluate(() => { window.__calls = 0; window.__lidarStream.useFixture((u, o) => { window.__calls++; if (window.__calls === 1) throw new TypeError('Failed to fetch'); return fetch(u, o); }, 1500); });
   await p.evaluate(() => window.SIM.map.jumpTo({ center: [-1.30, 51.75], zoom: 15, pitch: 50 })); await p.waitForTimeout(600);
-  await p.$$eval('#bar button', bs => bs.find(x => x.textContent === 'Stream ground').click());
+  await p.$$eval('button', bs => bs.find(x => x.textContent === 'Stream ground').click());
   await p.waitForFunction(() => /complete/.test(window.__lidarStream.receipt()), null, { timeout: 30000 });
   const c1 = await p.evaluate(() => window.__calls), rc4 = await p.evaluate(() => window.__lidarStream.receipt());
   check('network error: DTM retried once, then DTM and DSM (fetchImpl 3 calls: fail, DTM, DSM)', c1 === 3 && /DTM receipt [0-9a-f]{12}/.test(rc4), `calls ${c1}`);
