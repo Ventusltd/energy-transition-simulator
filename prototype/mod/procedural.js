@@ -17,7 +17,11 @@
   // period, not a south row pitch, so it is not used for south rows. Pitch and MW per hectare stay engine-derived and tagged.
   const CALIB = { N: 0, pitchTag: 'engine default (gcr formula), not calibrated', mwPerHaTag: 'derived from the engine site box, not calibrated' };
   const LABEL = `procedural estimate (formula calibrated on ${CALIB.N} measured samples: the 6 samples hold ground only; the 1 imagery row reading is an east-west tent farm, not used for south rows)`;
-  const MAX_ASSETS = 4, MIN_ZOOM = 12.5;
+  const MAX_ASSETS = 4, MIN_ZOOM = 12, REACH_DEG = 0.015;   // a site whose register point is within ~1.5 km of the view counts
+  // GHOST style (the night's line-style rule: solid = measured, dashed = documented, ghost = estimated). Procedural wire is
+  // estimated, so it is drawn by this module's OWN layer, faint and see-through, never in the solid cyan of measured wire,
+  // and the satellite stays visible under it.
+  const GHOST_RGBA = [0.82, 0.95, 1.0, 0.32];
   // Battery yard, ASSUMED (not measured, not cited): 2 h duration, 3.7 MWh per 20 ft container (6.06 x 2.44 x 2.9 m),
   // containers in rows of 10 at 3 m gaps, rows 6 m apart, fence 10 m outside.
   const BESS = { hours: 2, mwhPerUnit: 3.7, w: 6.06, d: 2.44, h: 2.9, perRow: 10, gap: 3, aisle: 6, fence: 10 };
@@ -38,8 +42,37 @@
     const f = reg.fields, ix = k => f.indexOf(k);
     const rows = reg.records.map(x => ({ ref: x[ix('ref')], tech: reg.tech[x[ix('tech')]], mw: x[ix('mw10')] / 10,
       lat: x[ix('lat5')] / 1e5, lon: x[ix('lon5')] / 1e5 })).filter(r => (r.tech === 'solar' || r.tech === 'bess') && r.mw > 0);
-    const map = SIM.map, cache = new Map();
+    const map = SIM.map, cache = new Map(), ghost = [];
     let on = false, busy = false, pending = false, shown = [];
+    const layer = { id: 'procedural-ghost', type: 'custom', renderingMode: '3d',
+      onAdd(m, gl) { const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+        this.pr = gl.createProgram();
+        gl.attachShader(this.pr, sh(gl.VERTEX_SHADER, 'uniform mat4 u; attribute vec3 p; void main(){ gl_Position = u * vec4(p, 1.0); }'));
+        gl.attachShader(this.pr, sh(gl.FRAGMENT_SHADER, 'precision mediump float; uniform vec4 c; void main(){ gl_FragColor = c; }'));
+        gl.linkProgram(this.pr); this.gl = gl; },
+      render(gl, args) {
+        if (!ghost.length) return;
+        const m = args.defaultProjectionData?.mainMatrix || args, loc = gl.getAttribLocation(this.pr, 'p');
+        gl.useProgram(this.pr); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+        gl.uniform4fv(gl.getUniformLocation(this.pr, 'c'), GHOST_RGBA);
+        for (const b of ghost) {
+          if (!b.vbo) { b.vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b.vbo); gl.bufferData(gl.ARRAY_BUFFER, b.buf, gl.STATIC_DRAW); }
+          const a = b.anchor, gz = (map.queryTerrainElevation && map.queryTerrainElevation([a.lon, a.lat])) || 0, o = PF.toMercator(a.lat, a.lon, gz), r = Array.from(m);
+          for (let k = 0; k < 4; k++) r[12 + k] = m[k] * o.x + m[4 + k] * o.y + m[8 + k] * o.z + m[12 + k];
+          gl.bindBuffer(gl.ARRAY_BUFFER, b.vbo); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+          gl.uniformMatrix4fv(gl.getUniformLocation(this.pr, 'u'), false, new Float32Array(r)); gl.drawArrays(gl.LINES, 0, b.buf.length / 3);
+        }
+        gl.depthMask(true);
+      } };
+    const addLayer = () => { try { if (!map.getLayer(layer.id)) map.addLayer(layer); } catch (e) { map.once('idle', addLayer); } };
+    addLayer(); map.on('style.load', addLayer);                 // the Satellite / Dark / Wire buttons replace the style
+    const drop = fn => { for (let i = ghost.length - 1; i >= 0; i--) if (fn(ghost[i])) { const b = ghost.splice(i, 1)[0];
+      if (b.vbo && layer.gl) layer.gl.deleteBuffer(b.vbo); } map.triggerRepaint(); };
+    const cap = document.createElement('div'); cap.id = 'procedural-caption';   // its own caption, never #info
+    cap.style.cssText = 'position:absolute;right:8px;top:150px;z-index:2;max-width:440px;font:12px sans-serif;color:rgba(225,245,255,.9);'
+      + 'background:rgba(0,0,0,.55);padding:6px 8px;border-radius:6px;border:1px dashed rgba(210,242,255,.45);display:none';
+    document.body.appendChild(cap);
+    const say = t => { cap.textContent = t; cap.style.display = t ? 'block' : 'none'; };
 
     function place(r, lines) {                                  // local metres at the register point -> anchored block
       const a = PF.placeKey(r.lat, r.lon), off = PF.toLocal(a, r.lat, r.lon, 0), out = [];
@@ -114,31 +147,33 @@
       if (!on) return; if (busy) { pending = true; return; } busy = true;
       try {
         const c = map.getCenter(), b = map.getBounds(), k = Math.cos(c.lat * Math.PI / 180);
-        const near = map.getZoom() < MIN_ZOOM ? [] : rows.filter(r => b.contains([r.lon, r.lat]))
+        const inView = r => r.lat > b.getSouth() - REACH_DEG && r.lat < b.getNorth() + REACH_DEG && r.lon > b.getWest() - REACH_DEG / k && r.lon < b.getEast() + REACH_DEG / k;
+        const near = map.getZoom() < MIN_ZOOM ? [] : rows.filter(inView)
           .map(r => ({ r, d: Math.hypot(r.lat - c.lat, (r.lon - c.lng) * k) })).sort((a, z) => a.d - z.d).slice(0, MAX_ASSETS).map(x => x.r);
         const texts = [];
         for (const r of near) {
           const sg = sig(), old = cache.get(r.ref);            // redo once the real lines arrive (pylons-real loads them async)
           if (!old || old.sig !== sg) { const g = r.tech === 'bess' ? bess(r) : await solar(r);
-            if (old) { SIM.removeWhere(x => x.procedural === r.ref); shown = shown.filter(z => z !== r.ref); }
+            if (old) { drop(x => x.procedural === r.ref); shown = shown.filter(z => z !== r.ref); }
             cache.set(r.ref, { blocks: place(r, g.lines), text: g.text, n: g.lines.length, geom: g.geom, sig: sg }); }
           texts.push(cache.get(r.ref).text);
         }
         const keep = new Set(near.map(r => r.ref));
-        SIM.removeWhere(x => x.procedural && !keep.has(x.procedural));
-        for (const r of near) if (!shown.includes(r.ref)) for (const bl of cache.get(r.ref).blocks) SIM.addBlock(bl);
+        drop(x => !keep.has(x.procedural));
+        for (const r of near) if (!shown.includes(r.ref)) for (const bl of cache.get(r.ref).blocks) { delete bl.vbo; ghost.push(bl); }
+        map.triggerRepaint();
         shown = near.map(r => r.ref);
         btn.textContent = `Procedural (${shown.length})`;
-        SIM.info(shown.length ? `${LABEL}. At register points, sized from register capacity: ${texts.join('; ')}. EV forecourts: no register loaded, not drawn.`
+        say(shown.length ? `${LABEL}. Ghost lines = estimated (solid = measured, dashed = documented). At register points, sized from register capacity: ${texts.join('; ')}. EV forecourts: no register loaded, not drawn.`
           : `Procedural: no register solar or storage in view${map.getZoom() < MIN_ZOOM ? ' (zoom in to ' + MIN_ZOOM + ')' : ''}. ${LABEL}.`);
-        window.__procedural = { label: LABEL, calibN: CALIB.N, shown: near.map(r => ({ ref: r.ref, tech: r.tech, mw: r.mw, lat: r.lat, lon: r.lon, segments: cache.get(r.ref).n, text: cache.get(r.ref).text, geom: cache.get(r.ref).geom })) };
-      } catch (e) { SIM.info('Procedural: ' + e.message); }
+        window.__procedural = { label: LABEL, style: 'ghost', ghostBlocks: ghost.length, layer: !!map.getLayer(layer.id), calibN: CALIB.N, shown: near.map(r => ({ ref: r.ref, tech: r.tech, mw: r.mw, lat: r.lat, lon: r.lon, segments: cache.get(r.ref).n, text: cache.get(r.ref).text, geom: cache.get(r.ref).geom })) };
+      } catch (e) { say('Procedural: ' + e.message); }
       busy = false; if (pending) { pending = false; refresh(); }
     }
-    const btn = SIM.addButton('Procedural', () => { on = !on; btn.classList.toggle('on', on); if (on) refresh(); else { SIM.removeWhere(x => x.procedural); shown = []; btn.textContent = 'Procedural'; } });
+    const btn = SIM.addButton('Procedural', () => { on = !on; btn.classList.toggle('on', on); if (on) refresh(); else { drop(() => true); shown = []; say(''); btn.textContent = 'Procedural'; } });
     btn.id = 'procedural';
     map.on('moveend', refresh);
-    window.__proceduralRefresh = refresh;
+    window.__proceduralRefresh = refresh; window.__proceduralGhost = () => ghost.length;
   }
 
   (function wait() { if (window.SIM && window.__pf && window.__pf.PF) start(window.SIM, window.__pf.PF); else setTimeout(wait, 100); })();

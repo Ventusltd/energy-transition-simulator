@@ -49,7 +49,10 @@ async function browser() {
   check('6502 view: no table and no container within reachM + margin of any line span', clr && clr.bad === 0 && clr.tables > 1000, JSON.stringify(clr && { tables: clr.tables, containers: clr.containers, bad: clr.bad, worstSlackM: clr.worstSlackM, others: clr.others }));
   check('6502: table positions kept out reported', clr && clr.skipped > 0 && /table positions kept out of overhead line zones \(illustrative\)/.test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
   console.log('CLEARANCE 6502', JSON.stringify(clr));
-  const info = await p.textContent('#info');
+  const info = await p.textContent('#procedural-caption');
+  const gs = await p.evaluate(() => ({ style: window.__procedural.style, ghost: window.__proceduralGhost(), layer: !!window.SIM.map.getLayer('procedural-ghost'),
+    solid: window.SIM.blocks.filter(x => x.procedural).length, info: document.getElementById('info').textContent.includes('procedural estimate') }));
+  check('drawn in the GHOST style by its own layer, none in the solid (measured) wire, #info left alone', gs.style === 'ghost' && gs.ghost > 0 && gs.layer && gs.solid === 0 && !gs.info, JSON.stringify(gs));
   const N = await p.evaluate(() => window.__procedural.calibN);
   check('label says procedural estimate with the real calibration N', Number.isInteger(N) && info.includes(`procedural estimate (formula calibrated on ${N} measured samples`), `N=${N}: ${info.slice(0, 200)}`);
   // The formula readout, checked against what was drawn (not against itself).
@@ -79,7 +82,7 @@ async function browser() {
   await p.click('#drone'); await p.waitForTimeout(3000); await shot('6-bess-fly');
   // 3. Switching off removes every procedural block.
   await p.$eval('#procedural', x => x.click()); await p.waitForTimeout(500);
-  check('off removes the blocks', await p.evaluate(() => !window.SIM.blocks.some(x => x.procedural)), 'no procedural blocks left');
+  check('off removes the blocks', await p.evaluate(() => !window.SIM.blocks.some(x => x.procedural) && window.__proceduralGhost() === 0 && document.getElementById('procedural-caption').style.display === 'none'), 'no procedural blocks left, caption hidden');
   check('no page errors', errs.length === 0, errs.join(' | ') || 'none');
   await b.close(); server.close();
   for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}  -- ${r.evidence}`);
