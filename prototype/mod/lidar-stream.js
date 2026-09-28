@@ -24,7 +24,8 @@
     box.style.cssText = 'position:absolute;left:8px;bottom:8px;z-index:3;max-width:min(560px,calc(100vw - 32px));font:11px/1.35 monospace;color:#dfe;background:rgba(0,0,0,.72);padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-all';
     document.body.appendChild(box); return box;
   }
-  function show() {
+  function show() { showText(); place(); }
+  function showText() {
     const t = current && tiles.get(current), P = PF();
     if (!t) { panel().textContent = 'Measured ground (R5): arrive somewhere to stream its 2,048 m tile.'; return; }
     const eng = P && P.engine ? P.engine : (t.engine || '');
@@ -57,8 +58,16 @@
     if (c < 0 || rr < 0 || c >= r.geo.width || rr >= r.geo.height) return NaN;
     const k = rr * r.geo.width + c; return r.mask[k] ? r.geo.data[k] : NaN;
   }
+  // Terrain exaggeration: MapLibre 4.7 returns queryTerrainElevation multiplied by the exaggeration and relative to the
+  // centre's elevation (transform.elevation, also exaggerated). terrainAt is the RENDER lift in that same frame, so it
+  // must stay exactly what perf.js adds (the per-node cancellation H - gz + gz = H needs the same number on both sides).
+  // demAt is the map DEM in true metres (ODN), divided by the exaggeration like coords-readout.js, for DEM vs DTM.
+  const exag = () => { const m = window.SIM.map, t = m.getTerrain && m.getTerrain(); return (t && t.exaggeration) || 1; };
   function terrainAt(lon, lat) { const m = window.SIM.map; return (m.queryTerrainElevation && m.queryTerrainElevation([lon, lat])) || 0; }
-  function demAt(lon, lat) { const m = window.SIM.map, v = m.queryTerrainElevation ? m.queryTerrainElevation([lon, lat]) : null; return v == null ? null : v; }
+  function demAt(lon, lat) {
+    const m = window.SIM.map; if (!(m.getTerrain && m.getTerrain() && m.queryTerrainElevation)) return null;
+    const v = m.queryTerrainElevation([lon, lat]); return v == null ? null : (v + (m.transform.elevation || 0)) / exag();
+  }
   // The measured DTM height (m, ODN) of the 1 m cell holding (e, n), with the receipt it came from; null outside.
   function heightAt(e, n) {
     for (const t of tiles.values()) {
@@ -76,7 +85,7 @@
     const P = PF(), out = [];
     for (const [key, t] of tiles) {
       if (!t.H) continue;
-      const blk = window.SIM.blocks.find(b => b.lidarStream === key && b.kind === 'ground'); if (!blk) continue;
+      const blk = (t.blks || []).find(b => b.kind === 'ground'); if (!blk) continue;
       const idx = []; for (let k = 0; k < t.N * t.N; k++) if (t.seg[k] >= 0) idx.push(k);
       const gzNow = terrainAt(t.anchor.lon, t.anchor.lat), stride = Math.max(1, Math.floor(idx.length / n));
       for (let q = 0; q < idx.length && out.length < n; q += stride) {
@@ -86,13 +95,13 @@
         out.push({ e, n: nn, drawn, truth: truth.h, D: drawn - truth.h, demD: demAt(g.lon, g.lat) == null ? null : demAt(g.lon, g.lat) - truth.h, receipt: truth.receipt });
       }
     }
-    const D = out.map(o => Math.abs(o.D)), dm = out.filter(o => o.demD != null), M = dm.map(o => Math.abs(o.demD));
+    const D = out.map(o => Math.abs(o.D)), exaggeration = exag(), dm = out.filter(o => o.demD != null), M = dm.map(o => Math.abs(o.demD));
     return { nodes: out.length, maxAbsD: Math.max(...D), meanD: out.reduce((s, o) => s + o.D, 0) / (out.length || 1),
-      demNodes: dm.length, maxAbsDemD: M.length ? Math.max(...M) : null, meanDemD: dm.length ? dm.reduce((s, o) => s + o.demD, 0) / dm.length : null, receipt: out[0] && out[0].receipt, sample: out.slice(0, 3) };
+      demNodes: dm.length, maxAbsDemD: M.length ? Math.max(...M) : null, meanDemD: dm.length ? dm.reduce((s, o) => s + o.demD, 0) / dm.length : null, receipt: out[0] && out[0].receipt, exaggeration, sample: out.slice(0, 3) };
   }
   function draw(key) {
     const t = tiles.get(key), S = window.SIM, P = PF();
-    S.removeWhere(b => b.lidarStream === key);
+    S.removeWhere(b => b.lidarStream === key); if (t) t.blks = [];
     if (!t || !t.dtm || t.dtm.none || t.dtm.pending) return;
     const f = frame(t.tile); t.engine = f.engine;
     const N = 2048 / STEP;
@@ -111,8 +120,8 @@
       if (L.length > k0) seg[b * N + a] = k0;
     }
     t.gz = gz; t.H = H; t.seg = seg; t.N = N; t.anchor = f.anchor;
-    S.addBlock({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: L, buf: P.wireBuffer(f.anchor, L), lidarStream: key,
-      prov: 'measured', receipt: t.dtm.sha, kind: 'ground' });
+    t.blks.push({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: L, buf: P.wireBuffer(f.anchor, L), lidarStream: key,
+      prov: 'measured', receipt: t.dtm.sha, kind: 'ground', gz });
     t.segs = L.length;
     if (t.dsm && !t.dsm.none && !t.dsm.pending) {
       const O = []; let n = 0;
@@ -130,10 +139,51 @@
           [p[0] + d, p[1] + d, z1, p[0] - d, p[1] + d, z1], [p[0] - d, p[1] + d, z1, p[0] - d, p[1] - d, z1]);
       }
       t.objects = n;
-      if (O.length) S.addBlock({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: O, buf: P.wireBuffer(f.anchor, O), lidarStream: key,
-        prov: 'derived', receipt: t.dsm.sha, kind: 'above-ground' });
+      if (O.length) t.blks.push({ lon: f.anchor.lon, lat: f.anchor.lat, anchor: f.anchor, lines: O, buf: P.wireBuffer(f.anchor, O), lidarStream: key,
+        prov: 'derived', receipt: t.dsm.sha, kind: 'above-ground', gz });
     }
+    sync();
+  }
+
+  // LAYER ORDER. Wire and Dark: the blocks ride the overlay's solid wire layer, as before. Satellite: they move to this
+  // module's own layer, drawn above the imagery in the same colour (still solid, continuous lines = measured) but at
+  // alpha SAT_ALPHA with no depth write, so the satellite stays visible through the 8 m grid at close range.
+  const SAT_ALPHA = 0.35, sat = [];
+  const satMode = () => { const m = window.SIM.map; return !!(m.getSource && m.getSource('sat')); };
+  const layer = { id: 'lidar-stream-sat', type: 'custom', renderingMode: '3d',
+    onAdd(m, gl) { const sh = (ty, src) => { const o = gl.createShader(ty); gl.shaderSource(o, src); gl.compileShader(o); return o; };
+      this.pr = gl.createProgram();
+      gl.attachShader(this.pr, sh(gl.VERTEX_SHADER, 'uniform mat4 u; attribute vec3 p; void main(){ gl_Position = u * vec4(p, 1.0); }'));
+      gl.attachShader(this.pr, sh(gl.FRAGMENT_SHADER, 'precision mediump float; uniform vec4 c; void main(){ gl_FragColor = c; }'));
+      gl.linkProgram(this.pr); this.vbo = new WeakMap(); },
+    render(gl, args) {
+      if (!sat.length) return;
+      const m = (args && args.defaultProjectionData && args.defaultProjectionData.mainMatrix) || args, P = PF(), loc = gl.getAttribLocation(this.pr, 'p');
+      gl.useProgram(this.pr); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+      gl.uniform4f(gl.getUniformLocation(this.pr, 'c'), 0.55, 0.9, 1.0, SAT_ALPHA);
+      for (const b of sat) {
+        let v = this.vbo.get(b); if (!v) { v = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, v); gl.bufferData(gl.ARRAY_BUFFER, b.buf, gl.STATIC_DRAW); this.vbo.set(b, v); }
+        const o = P.toMercator(b.anchor.lat, b.anchor.lon, b.gz), r = new Float32Array(m); // the lift the buffer was built with (as perf.js caches it)
+        for (let k = 0; k < 4; k++) r[12 + k] = m[k] * o.x + m[4 + k] * o.y + m[8 + k] * o.z + m[12 + k];
+        gl.bindBuffer(gl.ARRAY_BUFFER, v); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+        gl.uniformMatrix4fv(gl.getUniformLocation(this.pr, 'u'), false, r); gl.drawArrays(gl.LINES, 0, b.buf.length / 3);
+      }
+      gl.depthMask(true);
+    } };
+  function sync() {
+    const S = window.SIM, s = satMode();
+    S.removeWhere(b => b.lidarStream); sat.length = 0;
+    for (const t of tiles.values()) for (const b of t.blks || []) if (s) sat.push(b); else S.addBlock(b);
+    try { if (!S.map.getLayer(layer.id)) S.map.addLayer(layer); } catch (e) { /* style still loading; style.load re-adds */ }
     S.repaint();
+  }
+  // The receipt panel sits above the landing caption (#info, which carries the pylons line); never over it.
+  function place() {
+    const inf = document.getElementById('info'); if (!box) return;
+    box.style.bottom = '8px';
+    if (!inf || !inf.textContent.trim() || inf.offsetParent === null) return;
+    const a = box.getBoundingClientRect(), c = inf.getBoundingClientRect();
+    if (a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom) box.style.bottom = Math.ceil(innerHeight - c.top + 6) + 'px';
   }
 
   async function fetchProduct(key, k) {
@@ -199,6 +249,9 @@
     // Arrival hooks, no edits to the overlay: a flyTo (find/go) that ends, and the Walk, Drone and Build here buttons.
     const fly = S.map.flyTo.bind(S.map);
     S.map.flyTo = (...a) => { arriving = true; return fly(...a); };
+    S.map.on('style.load', sync);
+    const inf = document.getElementById('info'); if (inf && window.MutationObserver) new MutationObserver(place).observe(inf, { childList: true, characterData: true, subtree: true });
+    addEventListener('resize', place);
     S.map.on('idle', () => { for (const [k, t] of tiles) if (t.H && Math.abs(terrainAt(t.anchor.lon, t.anchor.lat) - t.gz) > 0.01) draw(k); });
     S.map.on('moveend', () => { if (arriving) { arriving = false; arrive('find or go'); } });
     for (const [id, w] of [['walk', 'Walk'], ['drone', 'Drone'], ['here', 'Build here']]) {
@@ -209,8 +262,11 @@
       arrive, tiles, heightAt, probe, pacer: () => pacer.state, R5: () => R5,
       // Tests and local checks only: serve a fixture instead of the EA; the gap may be shortened ONLY with a fixture.
       useFixture(fn, gapMs) { fetchImpl = fn; gapOverride = gapMs == null ? null : gapMs; pacer.state.next = 0; },
-      segs: () => S.blocks.filter(b => b.lidarStream).reduce((s, b) => s + b.lines.length, 0),
-      blocks: () => S.blocks.filter(b => b.lidarStream).map(b => ({ kind: b.kind, prov: b.prov, receipt: b.receipt, lat: b.lat, lon: b.lon, n: b.lines.length })),
+      segs: () => [...tiles.values()].flatMap(t => t.blks || []).reduce((s, b) => s + b.lines.length, 0),
+      layer: () => ({ satellite: satMode(), own: sat.length, inWire: S.blocks.filter(b => b.lidarStream).length, alpha: SAT_ALPHA, onMap: !!S.map.getLayer(layer.id) }),
+      overlap: () => { const inf = document.getElementById('info'), a = panel().getBoundingClientRect(), c = inf ? inf.getBoundingClientRect() : null;
+        return { receipt: a.toJSON(), info: c && c.toJSON(), overlaps: !!c && a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom }; },
+      blocks: () => [...tiles.values()].flatMap(t => t.blks || []).map(b => ({ kind: b.kind, prov: b.prov, receipt: b.receipt, lat: b.lat, lon: b.lon, n: b.lines.length })),
       receipt: () => panel().textContent
     };
   });

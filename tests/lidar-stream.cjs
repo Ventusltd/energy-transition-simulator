@@ -91,6 +91,19 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   const pr = await p.evaluate(() => window.__lidarStream.probe(200));
   check('datum probe: 200 nodes drawn at their own DTM height, |D| < 0.5 m', pr.nodes === 200 && pr.maxAbsD < 0.5, `max|D| ${pr.maxAbsD.toFixed(4)} m, mean ${pr.meanD.toFixed(4)} m; map DEM vs DTM max ${pr.maxAbsDemD} m over ${pr.demNodes} loaded nodes (item 3; fixture DTM is synthetic)`);
   await p.screenshot({ path: path.join(OUT, 'stream-1-drone.png') });
+  // LAYER ORDER: Satellite moves the measured wire to its own see-through layer (imagery stays visible); Wire takes it back.
+  await p.click('#sat'); await p.waitForTimeout(2500);
+  const ls = await p.evaluate(() => window.__lidarStream.layer());
+  check('Satellite: measured wire on its own see-through layer above the imagery, not in the solid wire', ls.satellite && ls.onMap && ls.own >= 1 && ls.inWire === 0 && ls.alpha < 0.5, JSON.stringify(ls));
+  await p.screenshot({ path: path.join(OUT, 'stream-2-satellite.png') });
+  await p.click('#wire'); await p.waitForTimeout(1500);
+  const lw = await p.evaluate(() => window.__lidarStream.layer());
+  check('Wire: blocks back in the solid wire layer, own layer empty', !lw.satellite && lw.own === 0 && lw.inWire === bl.length, JSON.stringify(lw));
+  // The receipt panel never covers the landing caption (#info, with the pylons line): bounding rects must not intersect.
+  await p.evaluate(() => { const i = document.getElementById('info'); i.style.display = ''; i.textContent = 'Pylons: caption overlap check, a long line that runs across the bottom of the screen like the mapped pylons caption does'; });
+  await p.waitForTimeout(200);
+  const ov = await p.evaluate(() => window.__lidarStream.overlap());
+  check('receipt panel does not overlap the #info caption', ov.info && ov.info.height > 0 && !ov.overlaps, `receipt top ${Math.round(ov.receipt.top)}-${Math.round(ov.receipt.bottom)}, info ${ov.info && Math.round(ov.info.top)}-${ov.info && Math.round(ov.info.bottom)}`);
   // Movement never fetches: walk and pan.
   const n0 = ea.length;
   await p.evaluate(() => window.SIM.map.jumpTo({ center: [-1.046, 52.2436], zoom: 17.5, pitch: 72 }));
