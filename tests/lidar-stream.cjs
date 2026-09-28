@@ -102,8 +102,28 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   // The receipt panel never covers the landing caption (#info, with the pylons line): bounding rects must not intersect.
   await p.evaluate(() => { const i = document.getElementById('info'); i.style.display = ''; i.textContent = 'Pylons: caption overlap check, a long line that runs across the bottom of the screen like the mapped pylons caption does'; });
   await p.waitForTimeout(200);
-  const ov = await p.evaluate(() => window.__lidarStream.overlap());
-  check('receipt panel does not overlap the #info caption (hidden by the menu style since setup c50575c)', ov.info && (ov.info.height === 0 || !ov.overlaps), `info height ${ov.info && ov.info.height}; receipt top ${Math.round(ov.receipt.top)}-${Math.round(ov.receipt.bottom)}, info ${ov.info && Math.round(ov.info.top)}-${ov.info && Math.round(ov.info.bottom)}`);
+  await p.waitForTimeout(1200);
+  // STRICT (r4): the receipt's visible box against EVERY visible caption element on the page: any element that holds its
+  // own text, is rendered (checkVisibility, so position:fixed captions count too; offsetParent is null for those) and has
+  // a non-empty rect. Fails on 7cc775a, where the box sat over #where, the note and the attribution strip.
+  const ov = await p.evaluate(() => { const R = document.getElementById('lidar-stream-receipt'), vis = e => e.getClientRects().length > 0 && (!e.checkVisibility || e.checkVisibility({ checkOpacityProperty: true, checkVisibilityCSS: true }));
+    const shown = [...R.querySelectorAll('*'), R].filter(e => vis(e) && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())).map(e => e.getBoundingClientRect()).filter(r => r.width > 0 && r.height > 0);
+    const hits = [], caps = [];
+    for (const el of document.body.querySelectorAll('*')) {
+      if (R.contains(el) || !vis(el) || ![...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) continue;
+      const c = el.getBoundingClientRect(); if (!(c.width > 0 && c.height > 0)) continue; caps.push(el.id || el.className || el.tagName);
+      for (const a of shown) if (a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom) hits.push(`${el.id || el.tagName}:${el.textContent.trim().slice(0, 30)}`);
+    }
+    return { receiptRects: shown.length, lines: shown.map(r => Math.round(r.height)), caps: caps.length, hits, visibleIds: caps.filter(x => typeof x === 'string' && /^(where|attribution|sim-note|procedural-caption|info)$/.test(x)) }; });
+  check('receipt is ONE line and overlaps NO visible caption (#where, note, pylon/placement caption, attribution)', ov.receiptRects === 1 && ov.lines[0] <= 16 && ov.hits.length === 0 && ov.visibleIds.includes('where') && ov.visibleIds.includes('attribution') && ov.visibleIds.includes('sim-note'), `receipt text boxes ${ov.receiptRects} (h ${ov.lines.join(',')}); ${ov.caps} visible captions incl ${ov.visibleIds.join(',')}; hits: ${ov.hits.join(' | ') || 'none'}`);
+  const ln = await p.evaluate(() => window.__lidarStream.line());
+  check('one dim line reads "measured ground: EA LiDAR 1 m, tile E/N, receipt sha8"', /^measured ground: EA LiDAR 1 m, tile \d+\/\d+, receipt [0-9a-f]{8}$/.test(ln.text) && !ln.open, ln.text);
+  await p.click('#lidar-stream-line'); await p.waitForTimeout(300);
+  const op = await p.evaluate(() => { const f = document.getElementById('lidar-stream-full'); return { vis: !f.hidden && f.getClientRects().length > 0, t: f.textContent }; });
+  await p.screenshot({ path: path.join(OUT, 'stream-6-receipt-open.png') });
+  await p.click('#lidar-stream-line'); await p.waitForTimeout(300);
+  const cl = await p.evaluate(() => document.getElementById('lidar-stream-full').hidden);
+  check('click opens the full receipt (sha256, licence), click again closes it', op.vis && /sha256\(cells\) [0-9a-f]{64}/.test(op.t) && /Open Government Licence/.test(op.t) && cl, `open ${op.vis}, closed after ${cl}`);
   // WALK (r3): the measured wire is visible near the walker (Satellite, Walk pose). The frame must be healthy
   // (transform.elevation = the ground at the centre); the overlay's stuck MapLibre _elevationFreeze is cleared here and
   // reported to the lead as a separate camera fault. Checks: node count within 100 m on screen, some in the lower third,

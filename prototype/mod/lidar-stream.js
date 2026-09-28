@@ -18,16 +18,32 @@
   function dayUsed() { try { const d = JSON.parse(localStorage.getItem(DAY_KEY) || '{}'); return d.date === today() ? d.used | 0 : 0; } catch (e) { return 0; } }
   function saveDay() { try { localStorage.setItem(DAY_KEY, JSON.stringify({ date: today(), used: pacer.state.used })); } catch (e) { /* private window */ } }
 
+  // The receipt collapses to ONE dim line (tile + receipt sha8); a click on it opens the full receipt, licence and
+  // attribution above it, a second click closes it. The line is placed clear of every visible caption (place()).
+  let line = null, full = null, open = false;
   function panel() {
-    if (box) return box;
+    if (box) return full;
     box = document.createElement('div'); box.id = 'lidar-stream-receipt';
-    box.style.cssText = 'position:absolute;left:8px;bottom:8px;z-index:3;max-width:min(560px,calc(100vw - 32px));font:11px/1.35 monospace;color:#dfe;background:rgba(0,0,0,.72);padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-all';
-    document.body.appendChild(box); return box;
+    box.style.cssText = 'position:fixed;left:10px;bottom:8px;z-index:5;display:flex;flex-direction:column-reverse;align-items:flex-start;gap:4px;max-width:calc(100vw - 120px)';
+    line = document.createElement('div'); line.id = 'lidar-stream-line'; line.title = 'Measured ground: click for the full receipt, licence and attribution';
+    line.style.cssText = 'font:11px/15px system-ui,sans-serif;color:var(--dim,#8a9a9a);text-shadow:0 0 3px #000,0 0 1px #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;cursor:pointer';
+    full = document.createElement('div'); full.id = 'lidar-stream-full'; full.hidden = true;
+    full.style.cssText = 'max-width:min(560px,calc(100vw - 32px));max-height:50vh;overflow:auto;font:11px/1.35 monospace;color:#dfe;background:rgba(0,0,0,.8);padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-all';
+    line.addEventListener('click', () => setOpen(!open));
+    box.append(line, full); document.body.appendChild(box); return full;
+  }
+  function setOpen(v) { panel(); open = !!v; full.hidden = !open; place(); }
+  function summary(t) {
+    if (!t) return 'measured ground: arrive somewhere to stream its tile';
+    const at = `tile ${t.tile.e0}/${t.tile.n0}`, d = t.dtm;
+    if (d && d.sha) return `measured ground: EA LiDAR 1 m, ${at}, receipt ${d.sha.slice(0, 8)}${t.dsm && t.dsm.sha ? '' : t.status && t.status !== 'complete' ? ` (${t.status})` : ''}`;
+    return `measured ground: ${at}, ${t.status || (d && d.none) || 'waiting'}`;
   }
   function show() { showText(); place(); }
   function showText() {
     const t = current && tiles.get(current), P = PF();
-    if (!t) { panel().textContent = 'Measured ground (R5): arrive somewhere to stream its 2,048 m tile.'; return; }
+    panel(); line.textContent = summary(t);
+    if (!t) { full.textContent = 'Measured ground (R5): arrive somewhere to stream its 2,048 m tile.'; return; }
     const eng = P && P.engine ? P.engine : (t.engine || '');
     const L = t.arrived ? [t.arrived] : [];
     L.push(`Measured ground, tile ${t.tile.e0} E ${t.tile.n0} N (2,048 m, EPSG:27700): ${t.status}`);
@@ -184,15 +200,27 @@
     try { if (!S.map.getLayer(layer.id)) S.map.addLayer(layer); } catch (e) { /* style still loading; style.load re-adds */ }
     S.repaint();
   }
-  // The receipt panel sits above the landing caption (#info, which carries the pylons line); never over it.
-  function place() {
-    const inf = document.getElementById('info'); if (!box) return;
-    box.style.bottom = '8px';
-    if (!inf || !inf.textContent.trim() || inf.offsetParent === null) return;
-    const a = box.getBoundingClientRect(), c = inf.getBoundingClientRect();
-    if (a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom) box.style.bottom = Math.ceil(innerHeight - c.top + 6) + 'px';
+  // The one-line receipt never covers a caption: it starts just above the attribution strip and steps up above any
+  // VISIBLE caption it would touch (#where, #sim-note, the pylon and procedural captions, anything fixed at the foot).
+  function captions() {
+    const out = [];
+    for (const el of document.body.querySelectorAll('body > *, body > * > [id]')) {
+      if (el === box || box.contains(el) || el.id === 'sim-menu' || el.tagName === 'SCRIPT' || !el.textContent.trim()) continue;
+      const cs = getComputedStyle(el); if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+      if (el.checkVisibility && !el.checkVisibility({ checkOpacityProperty: true, checkVisibilityCSS: true })) continue;
+      const r = el.getBoundingClientRect(); if (r.width > 0 && r.height > 0 && r.top > innerHeight / 2) out.push(r);
+    }
+    return out;
   }
-
+  function place() {
+    if (!box) return;
+    let bottom = 0; const cs = captions();
+    for (let k = 0; k < 12; k++) {
+      box.style.bottom = bottom + 'px';
+      const a = line.getBoundingClientRect(), hit = cs.find(c => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom);
+      if (!hit) break; bottom = Math.ceil(innerHeight - hit.top + 3);
+    }
+  }
   async function fetchProduct(key, k) {
     const t = tiles.get(key), src = R5.SOURCES[k], b = R5.clip(t.tile, src.env);
     if (!b) { t[k] = { none: 'outside the service envelope' }; return; }
@@ -258,7 +286,8 @@
     S.map.flyTo = (...a) => { arriving = true; return fly(...a); };
     S.map.on('style.load', sync);
     const inf = document.getElementById('info'); if (inf && window.MutationObserver) new MutationObserver(place).observe(inf, { childList: true, characterData: true, subtree: true });
-    addEventListener('resize', place);
+    addEventListener('resize', place); setInterval(place, 1000); // captions come and go (the 8 s note); cheap
+    addEventListener('keydown', e => { if (e.key === 'Escape' && open) setOpen(false); });
     S.map.on('idle', () => { for (const [k, t] of tiles) if (t.H && (Math.abs(terrainAt(t.anchor.lon, t.anchor.lat) - t.gz) > 0.01 || Math.abs(elevNow() - (t.E || 0)) > 0.01)) draw(k); });
     S.map.on('moveend', () => { if (arriving) { arriving = false; arrive('find or go'); } });
     for (const [id, w] of [['walk', 'Walk'], ['drone', 'Drone'], ['here', 'Build here']]) {
@@ -271,10 +300,9 @@
       useFixture(fn, gapMs) { fetchImpl = fn; gapOverride = gapMs == null ? null : gapMs; pacer.state.next = 0; },
       segs: () => [...tiles.values()].flatMap(t => t.blks || []).reduce((s, b) => s + b.lines.length, 0),
       layer: () => ({ satellite: satMode(), own: sat.length, inWire: S.blocks.filter(b => b.lidarStream).length, alpha: SAT_ALPHA, onMap: !!S.map.getLayer(layer.id) }),
-      overlap: () => { const inf = document.getElementById('info'), a = panel().getBoundingClientRect(), c = inf ? inf.getBoundingClientRect() : null;
-        return { receipt: a.toJSON(), info: c && c.toJSON(), overlaps: !!c && a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom }; },
+      line: () => { panel(); return { text: line.textContent, rect: line.getBoundingClientRect().toJSON(), open }; }, setOpen, place,
       blocks: () => [...tiles.values()].flatMap(t => t.blks || []).map(b => ({ kind: b.kind, prov: b.prov, receipt: b.receipt, lat: b.lat, lon: b.lon, n: b.lines.length })),
-      receipt: () => panel().textContent
+      receipt: () => panel().textContent  // the full receipt (shown on click)
     };
   });
 })();
