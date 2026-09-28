@@ -1,12 +1,18 @@
-// Plan view check (mod/plan-view.js + mod/morph.js): View > Plan, the key P and the typed "plan"; north-up and flat;
-// the scale bar; the MORPH into the wireframe (past z17.5 the world rises from flat to 3D over 1.2 s, heights 0 -> 1
-// with the pitch 0 -> 60) and back out (past z16.5 it flattens to plan); the plan state machine (P from Walk, deeper
-// than z17.5, eases out to z16.5 flat, then a wheel in ends at pitch 60 with every height back at 1; a "go" from plan
-// leaves plan, legend included); and something by default at a register asset (P at the farm switches the scanner
-// rows, the procedural fill and the AC trench model on by itself, one label per object class).
-// Serves prototype/ on a local port. mod/index.json is NOT edited: the server answers it with the SHIPPED list plus
-// plan-view only (before menu-bar, which stays last), exactly as the lead will switch it on. No other module is added.
-// Leaving plan: from plan, Walk, Drone and Map (View menu or keys 1 2 3) give plan off and the mode's own camera.
+// Plan view check (mod/plan-view.js + mod/morph.js). What it proves:
+// - View > Plan, the key P and the typed "plan"; north-up and flat; the scale bar and north arrow; imagery dimmed, the
+//   3D wire hidden not restyled; the 2D drawing comes from the blocks on the map; the grid-reference line is kept.
+// - Something by default at a register asset: P at the farm switches the scanner rows, the procedural fill and the AC
+//   trench model on by itself, one label per object class.
+// - The MORPH into the wireframe: past z17.5 the world rises from flat to 3D over about 1.2 s (heights 0 -> 1 with the
+//   pitch 0 -> 60) and back out past z16.5; held frames of a real morph change by under 10 % of pixels between
+//   consecutive frames, the plan frame to the first morph frame included (the wire fades in, it does not pop).
+// - The state machine: P from Walk (deeper than z17.5) eases out to z16.5 flat, a wheel in then ends at pitch 60 with
+//   every height back at 1; a "go" from plan leaves plan, legend included.
+// - Leaving plan: Walk, Drone and Map (View menu or keys 1 2 3) give plan off and the mode's own camera; a Drone key
+//   pressed while plan is still switching modules on gives Drone's camera and presses no further module button.
+// Serves prototype/ on a local port. mod/index.json is NOT edited: the server answers it with the SHIPPED list (minus
+// morph and plan-view if present) plus morph and plan-view before menu-bar, which stays last, exactly as the lead
+// switches them on. No other module is added.
 //   node tests/plan-view.cjs [outDir]
 // Env: UI_LAUNCHER (a module exporting launch(); default playwright Chrome with ANGLE d3d11), SHOTS=1 for the
 // review pictures (a solar farm in plan, three frames of the ease at a substation, a 400 kV line in plan).
@@ -71,6 +77,33 @@ const shot = async (p, name) => { if (SHOTS) { await p.screenshot({ path: path.j
     JSON.stringify({ scanner: dflt.scanner, procedural: dflt.procedural, trenches: dflt.trenches, auto: s.auto, pitch: s.pitch, zoom: s.zoom }));
   check('one label per object class', dflt.labels.length > 0 && uniq.size === dflt.labels.length && dflt.labels.length <= 12, dflt.labels.join(' | '));
   await shot(p, '00-farm-P-default.png');
+
+  // 0b. A real morph, frame by frame (SIM.plan.frame holds one frame of it), the canvas read back after each paint and
+  // compared with the frame before: the share of sampled pixels that changed (any channel by more than 32). Steps of
+  // 0.02 in eased progress, above the largest step a 60 fps 1.2 s cubic makes (0.021). Two series: `fixed` is the
+  // change the morph itself makes at each step (the same camera, heights and wire fade one step apart; the plan lines
+  // fade 2 % a step, under the threshold), which is what must stay under 10 %, the plan frame to the first morph frame
+  // (frame 0: the wire shown, faded to nothing) included; `moving` is the raw consecutive change with the camera
+  // pitching 1.2 degrees a step, printed as evidence (the imagery itself moves; it is not the criterion).
+  const px = await p.evaluate(async () => {
+    const m = window.SIM.map, gl = m.painter.context.gl, W = gl.drawingBufferWidth, H = gl.drawingBufferHeight, S = 4;
+    const grab = () => new Promise(r => { m.once('render', () => { const b = new Uint8Array(W * H * 4); gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, b); r(b); }); m.triggerRepaint(); });
+    const diff = (a, b) => { let n = 0, d = 0; for (let y = 0; y < H; y += S) for (let x = 0; x < W; x += S) { const i = (y * W + x) * 4; n++; if (Math.abs(a[i] - b[i]) > 32 || Math.abs(a[i + 1] - b[i + 1]) > 32 || Math.abs(a[i + 2] - b[i + 2]) > 32) d++; } return +(d / n).toFixed(4); };
+    const settle = () => new Promise(r => setTimeout(r, 60));
+    const plan = await grab(); let prev = plan; const fixed = [], moving = [];
+    for (let k = 0; k <= 50; k++) {
+      const e = k / 50; window.SIM.plan.frame(e); await settle(); const cur = await grab(); moving.push(diff(prev, cur));
+      if (k === 0) fixed.push(diff(plan, cur)); else { window.SIM.morph.set((k - 1) / 50); await settle(); const back = await grab(); fixed.push(diff(back, cur)); window.SIM.morph.set(e); }
+      prev = cur;
+    }
+    const st = window.SIM.morph.state();
+    window.SIM.plan.frame(0); await settle(); await grab();
+    return { fixed, moving, first: fixed[0], max: Math.max(...fixed), movingMax: Math.max(...moving), fade: st.fade, faded: st.totals.faded };
+  });
+  const pc = v => Math.round(v * 1000) / 10;
+  check('a real morph changes under 10 % of pixels a frame at a fixed camera, the plan frame to the first morph frame included', px.first < 0.1 && px.max < 0.1 && px.fade.includes('wire') && px.faded > 0,
+    JSON.stringify({ first: pc(px.first), maxFixed: pc(px.max), maxMovingCamera: pc(px.movingMax), fadedDraws: px.faded, fade: px.fade, fixed: px.fixed.map(pc).join(' '), moving: px.moving.map(pc).join(' ') }));
+  await p.waitForTimeout(400);
   await p.keyboard.press('p'); await p.waitForTimeout(1800);
 
   // What the SHIPPED modules give at the farm, switched on by their own buttons: scanner rows, the procedural wire,
@@ -182,6 +215,20 @@ const shot = async (p, name) => { if (SHOTS) { await p.screenshot({ path: path.j
     JSON.stringify({ on: s.on, in3d: s.in3d, pitch: s.pitch, zoom: s.zoom, easeMs: back && back.ms, morph: mb }));
   await p.keyboard.press('p'); await p.waitForTimeout(1800); s = await state(p);
   check('P again leaves plan (morph up) and restores the look', !s.on && s.dimmed === 0 && s.hidden.length === 0 && s.morphT === 1 && s.morphActive === false && !(await p.evaluate(() => !!window.SIM.map.getLayer('plan-documented'))), JSON.stringify({ on: s.on, pitch: s.pitch, morphT: s.morphT }));
+
+  // 4b. Leave while plan is still switching modules on: a fresh page at the farm, Drone, P, then the real key 2 at 1.5 s.
+  // 15 s later Drone's camera stands (pitch 60, zoom 16.5 or more: no module framing move got through) and no module
+  // button was pressed after the leave (the auto flags are as they were at the key).
+  await p.goto(url(FARM), { waitUntil: 'load' }); await ready(p);
+  await p.evaluate(() => document.querySelector('#drone').click()); await p.waitForTimeout(4000); await idle(p);
+  await p.mouse.click(800, 600); await p.keyboard.press('p'); await p.waitForTimeout(1500);
+  const atKey = await state(p); await p.keyboard.press('2');
+  const justLeft = await p.evaluate(() => ({ auto: window.SIM.plan.state().auto, procOn: !!document.querySelector('#procedural.on'), trench: window.__acTrenches ? window.__acTrenches.state().on : null, busy: window.SIM.plan.state().autoBusy }));
+  await p.waitForTimeout(15000); await idle(p);
+  const later = await state(p), laterMods = await p.evaluate(() => ({ procOn: !!document.querySelector('#procedural.on'), trench: window.__acTrenches ? window.__acTrenches.state().on : null, spd: (document.getElementById('spd') || {}).textContent || '' }));
+  const same = JSON.stringify(justLeft.auto) === JSON.stringify(later.auto) && justLeft.procOn === laterMods.procOn && justLeft.trench === laterMods.trench;
+  check('key 2 while plan switches modules on: Drone camera stands 15 s later, no module button pressed after the leave', atKey.on && !later.on && Math.abs(later.pitch - 60) < 0.5 && later.zoom >= 16.45 && same && !later.autoBusy && laterMods.spd.startsWith('drone'),
+    JSON.stringify({ atKey: { on: atKey.on, busy: atKey.autoBusy, auto: atKey.auto }, justLeft, later: { on: later.on, pitch: later.pitch, zoom: later.zoom, auto: later.auto, busy: later.autoBusy, left: later.left.slice(-1) }, laterMods }));
 
   // 5. The 400 kV line in plan (View > Plan clicked from its menu).
   await p.goto(url(LINE), { waitUntil: 'load' }); await ready(p);
