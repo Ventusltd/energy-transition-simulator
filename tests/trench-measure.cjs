@@ -49,7 +49,10 @@ const LAT = +(process.env.TLAT || 51.215), LON = +(process.env.TLON || -1.78);
   await p.evaluate(([lon, lat]) => window.SIM.map.jumpTo({ center: [lon, lat] }), rib);
   const go = await p.evaluate(() => window.__trench.cmd('trench go'));
   check('trench go: walks to a section at zoom 22', /looking along the trench/.test(go) , go);
-  await p.waitForTimeout(4000); await p.evaluate(() => window.SIM.map.fire('moveend')); await p.waitForTimeout(800);
+  await p.waitForTimeout(4000);
+  // On software WebGL (CI) the ease to zoom 22 is still running at 4 s; wait for the map to settle, as a player would.
+  await p.waitForFunction(() => !window.SIM.map.isMoving(), null, { timeout: 60000 }).catch(() => {});
+  await p.evaluate(() => window.SIM.map.fire('moveend')); await p.waitForTimeout(800);
   check('X-ray lifts the zoom limit to 22', await p.evaluate(() => window.SIM.map.getZoom() > 21.9), await p.evaluate(() => window.SIM.map.getZoom()));
   await p.screenshot({ path: path.join(OUT, '2-xray-walk-z22.png') });
   await p.evaluate(() => window.SIM.map.jumpTo({ pitch: 0, bearing: 0 }));
