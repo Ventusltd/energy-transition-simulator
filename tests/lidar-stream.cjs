@@ -84,6 +84,12 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   check('anchored near the tile centre (real lat/lon)', gr && Math.abs(gr.lat - 52.25) < 0.03 && Math.abs(gr.lon + 1.05) < 0.03, gr ? `${gr.lat} ${gr.lon}` : '-');
   check('receipt on screen with sha256 and licence', /sha256\(cells\) [0-9a-f]{64}/.test(rc) && /Open Government Licence v3\.0/.test(rc) && /Environment Agency/.test(rc), rc.slice(0, 200));
   check('survey year stated as not read (rule 9)', /pre-construction ground/.test(rc), 'rule 9 words');
+  // HEIGHT DATUM: heightAt against the fixture's own formula (independent truth), then the drawn height at 200 nodes.
+  const hq = await p.evaluate(() => { const g = window.__lidarStream.tiles.values().next().value.tile; return { g, r: window.__lidarStream.heightAt(g.e0 + 700.3, g.n0 + 900.8) }; });
+  const hTrue = DTM(hq.g.e0 + 700.5, hq.g.n0 + 900.5);
+  check('heightAt = the measured cell, with its receipt', hq.r.h != null && Math.abs(hq.r.h - hTrue) < 1e-3 && /^[0-9a-f]{12}$/.test(hq.r.receipt) && hq.r.prov === 'measured', `${hq.r.h} vs ${hTrue.toFixed(4)} receipt ${hq.r.receipt}`);
+  const pr = await p.evaluate(() => window.__lidarStream.probe(200));
+  check('datum probe: 200 nodes drawn at their own DTM height, |D| < 0.5 m', pr.nodes === 200 && pr.maxAbsD < 0.5, `max|D| ${pr.maxAbsD.toFixed(4)} m, mean ${pr.meanD.toFixed(4)} m; map DEM vs DTM max ${pr.maxAbsDemD} m over ${pr.demNodes} loaded nodes (item 3; fixture DTM is synthetic)`);
   await p.screenshot({ path: path.join(OUT, 'stream-1-drone.png') });
   // Movement never fetches: walk and pan.
   const n0 = ea.length;
