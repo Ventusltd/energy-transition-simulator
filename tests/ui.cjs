@@ -112,19 +112,33 @@ async function ready(p) {
     await p.evaluate(() => window.SIM.menu.close());
     await p.screenshot({ path: path.join(OUT, `${STAGE}-1920-after-clicks.png`) });
   }
+  // The two views the owner looks at, for every stage (before and after): the farm by drone, and walking in Wire.
+  await p.goto(base, { waitUntil: 'load' }); await ready(p);
+  await p.evaluate(() => document.getElementById('drone').click()); await p.waitForTimeout(4000);
+  await p.screenshot({ path: path.join(OUT, `${STAGE}-drone-1920.png`) });
+  await p.evaluate(() => { document.getElementById('wire').click(); }); await p.waitForTimeout(1500);
+  await p.evaluate(() => { const b = document.getElementById('pylons'); if (!b.classList.contains('on')) b.click(); document.getElementById('walk').click(); });
+  await p.waitForTimeout(7000);
+  await p.screenshot({ path: path.join(OUT, `${STAGE}-walk-wire-1920.png`) });
   if (STAGE === 'wire') {
-    await p.goto(base, { waitUntil: 'load' }); await ready(p);
-    await p.evaluate(() => { document.getElementById('wire').click(); });
-    await p.waitForTimeout(1500);
-    await p.evaluate(() => { const b = document.getElementById('pylons'); if (!b.classList.contains('on')) b.click(); document.getElementById('walk').click(); });
-    await p.waitForTimeout(6000);
     const wl = await p.evaluate(() => window.SIM.wireLook ? window.SIM.wireLook.stats() : null);
-    check('wire look active with a fade distance', wl && wl.fadeM > 0 && wl.frames > 0, JSON.stringify(wl));
-    check('1 m grid drawn within 30 m', wl && wl.minorSegments > 0 && wl.minorRadiusM <= 30, wl && `${wl.minorSegments} minor segments, radius ${wl.minorRadiusM} m`);
-    await p.screenshot({ path: path.join(OUT, 'wire-walk-1920.png') });
-    // Far rows (just below the horizon) should be darker than the rows near the viewer: the fade, not a stack of lines.
-    const shot = await p.screenshot({ clip: { x: 0, y: 40, width: 1920, height: 1000 } });
-    fs.writeFileSync(path.join(OUT, 'wire-walk-band.png'), shot);
+    check('wire look active with a fade distance', wl && wl.fadeM > 0 && wl.frames > 0 && !wl.err, JSON.stringify(wl));
+    check('1 m grid drawn within 30 m', wl && wl.gridOn && wl.minorSegments > 0 && wl.minorRadiusM <= 30, wl && `${wl.minorSegments} minor, ${wl.majorSegments} major segments, radius ${wl.minorRadiusM} m`);
+    // The fade, measured: the band just under the horizon with the fade off (1e7 m) against on (the default).
+    const band = async () => {
+      const png = (await p.screenshot({ clip: { x: 0, y: 324, width: 1920, height: 130 } })).toString('base64');
+      return p.evaluate(async b64 => {
+        const img = await new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = 'data:image/png;base64,' + b64; });
+        const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height; const g = cv.getContext('2d'); g.drawImage(img, 0, 0);
+        const d = g.getImageData(0, 0, img.width, img.height).data; let s = 0;
+        for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2]; return +(s / (d.length / 4) / 3).toFixed(2);
+      }, png);
+    };
+    await p.evaluate(() => window.SIM.wireLook.set({ fadeM: 1e7 })); await p.waitForTimeout(800); const off = await band();
+    await p.screenshot({ path: path.join(OUT, `${STAGE}-walk-wire-nofade-1920.png`) });
+    await p.evaluate(() => window.SIM.wireLook.set({ fadeM: 0 })); await p.waitForTimeout(800); const onF = await band();
+    const lum = { far_band_no_fade: off, far_band_fade: onF };
+    check('far lines fade (band under the horizon darker with the fade on)', onF < off * 0.8, JSON.stringify(lum));
   }
   // ---- phone 390 ----
   const q = await b.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }); q.on('pageerror', e => errs.push(e.message));

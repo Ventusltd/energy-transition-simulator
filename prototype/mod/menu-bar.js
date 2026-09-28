@@ -96,11 +96,11 @@
 .gm-panel .gm-sep { border-top: 1px solid var(--edge); margin: 6px 4px; }
 .gm-panel .gm-note { color: var(--dim); padding: 4px 8px; white-space: pre-wrap; font-size: 11px; }
 #where { position: fixed; left: 10px; bottom: calc(var(--foot, 20px) + 8px); z-index: 5; color: var(--dim); pointer-events: none;
-  font: 12px system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; max-width: calc(100vw - 110px); overflow: hidden; text-overflow: ellipsis; }
+  font: 12px system-ui, sans-serif; font-variant-numeric: tabular-nums; text-shadow: 0 0 3px #000, 0 0 1px #000; white-space: nowrap; max-width: calc(100vw - 110px); overflow: hidden; text-overflow: ellipsis; }
 #attribution { position: fixed; left: 0; right: 0; bottom: 0; height: var(--foot, 20px); z-index: 5; box-sizing: border-box; padding: 3px 10px 4px;
   font-size: 10px; line-height: 13px; color: var(--dim); background: rgba(10, 10, 10, .72); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #sim-note { position: fixed; left: 10px; bottom: calc(var(--foot, 20px) + 28px); z-index: 5; max-width: min(560px, calc(100vw - 110px)); color: var(--text);
-  font: 12px/1.45 system-ui, sans-serif; pointer-events: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  font: 12px/1.45 system-ui, sans-serif; text-shadow: 0 0 3px #000, 0 0 1px #000; pointer-events: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 #sim-note[hidden] { display: none; }
 #help-toggle { position: fixed; right: 10px; bottom: calc(var(--foot, 20px) + 6px); z-index: 6; min-height: 28px; padding: 0 10px; }
 #help { right: 10px; bottom: calc(var(--foot, 20px) + 40px); width: min(340px, calc(100vw - 36px)); z-index: 21; }
