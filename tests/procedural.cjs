@@ -38,7 +38,7 @@ async function browser() {
     check('404 run: window.SIM and the map canvas present before any shot', rd.SIM && rd.canvas, JSON.stringify(rd));
     await q.$eval('#procedural', x => x.click());
     let f = null; for (let t = 0; t < 60 && !(f && f.a && f.b && f.a.ohlMissing && f.a.fitN > 0); t++) { await q.waitForTimeout(1000);
-      f = await q.evaluate(() => { const S = window.__procedural; if (!S) return null; const g = ref => { const x = S.shown.find(z => z.ref === ref); return x && { ohlMissing: x.geom.ohlMissing, loaded: x.geom.ohlLoaded, clr: x.text.split('; ').find(z => /overhead line/.test(z)), fitN: x.geom.formula ? x.geom.formula.fitN : null, rowAz: x.geom.formula ? x.geom.formula.rowAzDeg : null, layout: x.geom.formula ? x.geom.formula.layout : null }; };
+      f = await q.evaluate(() => { const S = window.__procedural; if (!S) return null; const g = ref => { const x = S.shown.find(z => z.ref === ref); return x && { ohlMissing: x.geom.ohlMissing, loaded: x.geom.ohlLoaded, clr: x.text.split('; ').find(z => /overhead line/.test(z)), fitN: x.geom.formula ? x.geom.formula.fitN : null, rowAz: x.geom.formula ? x.geom.formula.rowAzDeg : null, layout: x.geom.formula ? x.geom.formula.layout : null, tables: x.geom.tables.length, spans: x.geom.ohl.length, kept: x.geom.skipped }; };
         return { a: g(6502), b: g(5394), oa: window.__proceduralOhl(6502), ob: window.__proceduralOhl(5394) }; }); }
     console.log('KV404', hit, JSON.stringify(f && { a: f.a, b: f.b, oa: f.oa && { loaded: f.oa.loaded, missing: f.oa.missing, http: f.oa.http, spans: f.oa.spans }, ob: f.ob && { loaded: f.ob.loaded, missing: f.ob.missing } }));
     const say = /overhead line data for 400 kV not loaded: clearance (not applied|partial)/;
@@ -46,7 +46,7 @@ async function browser() {
       JSON.stringify(f && { hit, a: f.a, b: f.b }));
     check('404: __proceduralOhl reports loaded:false with 400 kV missing, for 6502 and 5394', f && f.oa && f.ob && f.oa.loaded === false && f.ob.loaded === false && f.oa.missing.includes('400') && f.ob.missing.includes('400'),
       JSON.stringify(f && f.oa && { a: { loaded: f.oa.loaded, missing: f.oa.missing, http: f.oa.http }, b: f.ob && { loaded: f.ob.loaded, missing: f.ob.missing } }));
-    kv404Fit = f && f.a && { fitN: f.a.fitN, rowAz: f.a.rowAz, layout: f.a.layout, pressedScanner: false };
+    kv404Fit = f && f.a && { fitN: f.a.fitN, rowAz: f.a.rowAz, layout: f.a.layout, pressedScanner: false, tables: f.a.tables, spans: f.a.spans, kept: f.a.kept };
     check('404 run, Scanner rows never pressed: 6502 still fits its rows (fitN > 0), rows loaded on arrival', kv404Fit && kv404Fit.fitN > 0, JSON.stringify(kv404Fit));
     const rd2 = await q.evaluate(() => ({ SIM: !!window.SIM, canvas: !!document.querySelector('canvas.maplibregl-canvas') }));
     check('404 run: window.SIM and the map canvas present before the shot', rd2.SIM && rd2.canvas, JSON.stringify(rd2));
@@ -82,7 +82,11 @@ async function browser() {
     return { spans: g.ohl.length, reach: [...new Set(g.ohl.map(z => z.kv + ' kV ' + z.reachM + ' m'))], tables: g.tables.length, containers, others: window.__procedural.shown.map(h => h.ref + ': ' + h.geom.ohl.length + ' spans, ' + h.geom.skipped + ' kept out'), skipped: g.skipped, bad, worstSlackM: +worst.toFixed(2), text: f.text }; });
   check('6502: real overhead line spans passed to the layout', clr && clr.spans > 0, JSON.stringify(clr && { spans: clr.spans, reach: clr.reach }));
   check('6502 view: no table and no container within reachM + margin of any line span', clr && clr.bad === 0 && clr.tables > 1000, JSON.stringify(clr && { tables: clr.tables, containers: clr.containers, bad: clr.bad, worstSlackM: clr.worstSlackM, others: clr.others }));
-  check('6502: table positions kept out reported', clr && clr.skipped > 0 && /table positions kept out of overhead line zones \(illustrative\)/.test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
+  check('6502: kept-out readout is the drawn difference, with the positions in the zones named separately', clr && clr.skipped >= 0 && new RegExp(`${clr.skipped.toLocaleString('en-GB')} fewer tables drawn than without the line \\([\\d,]+ positions inside the line zones left empty`).test(clr.text) && /square site box at register point, not the real field/.test(clr.text), clr && `skipped ${clr.skipped}: ${clr.text}`);
+  const dr = await p.evaluate(() => { const g = window.__procedural.shown.find(x => x.ref === 6502).geom; return { withLine: g.tables.length, withoutLine: g.tablesWithoutLine, kept: g.skipped, inZones: g.positionsInZones }; });
+  check('6502: tables drawn without the line minus tables drawn with it == kept out (own no-line layout)', dr.withoutLine - dr.withLine === dr.kept, JSON.stringify(dr));
+  check('6502: drawn(404 page, no 400 kV, no spans) - drawn(normal) == kept out reported on the normal page', kv404Fit && kv404Fit.spans === 0 && kv404Fit.tables - dr.withLine === dr.kept,
+    JSON.stringify({ drawn404: kv404Fit && kv404Fit.tables, spans404: kv404Fit && kv404Fit.spans, drawnNormal: dr.withLine, keptOut: dr.kept, inZones: dr.inZones }));
   console.log('CLEARANCE 6502', JSON.stringify(clr));
   const info = await p.textContent('#procedural-caption');
   const gs = await p.evaluate(() => ({ style: window.__procedural.style, ghost: window.__proceduralGhost(), layer: !!window.SIM.map.getLayer('procedural-ghost'),

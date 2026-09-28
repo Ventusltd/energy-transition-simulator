@@ -170,8 +170,13 @@
       const ohlR = ohlNear(r, h), ohl = ohlR || [], th = rot * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
       const turn = ([e, n], s = 1) => [e * cs + s * n * sn, -s * e * sn + n * cs];     // clockwise by rot (s = -1: back)
       const ohlL = ohl.map(z => ({ ...z, pts: z.pts.map(q => turn(q, -1)) }));        // the real spans, in the layout's own frame
-      const res = await PL.layoutPlantAsync({ boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], targetMW: r.mw, layout: st.layout, template: inp.template,
-        piles: false, groundAt: () => 0, grid: null, water: [], ohl: ohlL.length ? ohlL : null, options: { ...inp.options, slopeLimitPct: st.slope, fenceSetbackM: st.fence } });
+      const lay = z => PL.layoutPlantAsync({ boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], targetMW: r.mw, layout: st.layout, template: inp.template,
+        piles: false, groundAt: () => 0, grid: null, water: [], ohl: z, options: { ...inp.options, slopeLimitPct: st.slope, fenceSetbackM: st.fence } });
+      const res = await lay(ohlL.length ? ohlL : null);
+      // The engine's skipped.ohl counts CANDIDATE positions inside the zones over the whole box; the plant then takes only the
+      // tables its MW needs from the free ones, so most of those positions are simply replaced elsewhere in the box. The readout
+      // is therefore the drawn difference: the same layout without the lines, minus the tables drawn with them.
+      const free = ohlL.length ? await lay(null) : res, lessT = free.tables.length / 6 - res.tables.length / 6;
       const Fr0 = res.frame, Fr = { en: (u, v) => turn(Fr0.en(u, v)) }, T = res.table, P = res.params, out = [], at = (u, v, z) => [...Fr.en(u, v), z], seg = (a, b) => out.push([...a, ...b]);
       const rowAz = ((st.layout === 'south' ? 90 : 0) + rot + 180) % 180;
       const rowTag = fit ? `row azimuth ${rowAz.toFixed(1)} deg, pitch ${T.pitch.toFixed(2)} m, fitted to ${fit.n.toLocaleString('en-GB')} measured rows inside a ${Math.round(2 * fit.boxHalfM).toLocaleString('en-GB')} m square around the register point`
@@ -185,14 +190,14 @@
       for (let q = 0; q < t.length; q += 6) { const ua = t[q], va = t[q + 1], ub = ua + (res.tableLen?.[q / 6] ?? T.lenU), vb = va + T.depth;
         tb.push([Fr.en(ua, va), Fr.en(ub, va), Fr.en(ub, vb), Fr.en(ua, vb)]); }
       for (const s of res.stations) { const [e, n] = Fr.en(s.u, s.v); box(out, e - 6, n - 1.5, 12, 3, 0, 3); }
-      const kept = (res.skipped && res.skipped.ohl) || 0, areaHa = side * side / 1e4, mwPerHa = r.mw / areaHa;
+      const kept = lessT, inZones = (res.skipped && res.skipped.ohl) || 0, areaHa = side * side / 1e4, mwPerHa = r.mw / areaHa;
       const rowsV = [...new Set(Array.from({ length: t.length / 6 }, (_, i) => Math.round(t[6 * i + 1] * 1000) / 1000))].sort((a, b) => a - b);
-      return { lines: out, geom: { ohl, ohlLoaded: ohlOk(ohlR), ohlMissing: ohlR ? ohlR.missing : null, ohlRadiusM: h, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept,
+      return { lines: out, geom: { ohl, ohlLoaded: ohlOk(ohlR), ohlMissing: ohlR ? ohlR.missing : null, ohlRadiusM: h, marginM: P.ohlMarginM, tables: tb, containers: [], skipped: kept, positionsInZones: inZones, tablesWithoutLine: free.tables.length / 6,
           formula: { pitchM: T.pitch, pitchTag: fit && pitchUsed ? 'row file reading, estimated from imagery' : CALIB.pitchTag, rowAzDeg: rowAz, layout: st.layout, fitN: fit ? fit.n : 0, fitBoxHalfM: fr.boxHalfM, fitAzDeg: fit ? fit.azDeg : null, rowTag, areaHa, mwPerHa, mwPerHaTag: CALIB.mwPerHaTag, N: CALIB.N,
             boundary: [[-h, -h], [h, -h], [h, h], [-h, h]], rowsV } },
         text: `${r.mw} MW solar: ${res.built.tables.toLocaleString('en-GB')} tables, ${rowTag}, `
           + `site box ${areaHa.toFixed(1)} ha = ${mwPerHa.toFixed(2)} MW/ha (${CALIB.mwPerHaTag}), ${res.built.stations} stations; `
-          + ohlSay(ohlR, `${kept.toLocaleString('en-GB')} table positions kept out of overhead line zones (illustrative)`)
+          + ohlSay(ohlR, `${kept.toLocaleString('en-GB')} fewer tables drawn than without the line (${inZones.toLocaleString('en-GB')} positions inside the line zones left empty, the rest placed on free ground in the box; illustrative)`)
           + `; ${SQUARE}` };
     }
     function bess(r) {                                          // ASSUMED yard rule (see BESS above)
