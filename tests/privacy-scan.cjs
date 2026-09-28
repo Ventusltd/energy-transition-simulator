@@ -1,5 +1,5 @@
 // Privacy scan for the PUBLIC repo. Fails (exit 1) when any tracked text file carries:
-//   (a) a local drive path such as X:/Users, X:\swarm, X:/gw or X:/private (the operator's machine, never the public site);
+//   (a) a local drive path (a drive letter, then Users, swarm, gw or private: the operator's machine, never the public site);
 //   (b) an e-mail address;
 //   (c) a token whose sha256 is listed in tests/privacy-hashes.json (private place and project names; only hashes are
 //       committed, so the list itself says nothing). Tokens are lowercased runs of 6+ letters, and runs of 2 to 6 such
