@@ -171,7 +171,9 @@
   // DEPTH_BIAS (r3): the map DEM is coarser than the 1 m DTM and sits up to ~2 m above measured nodes at the walker, so
   // a plain depth test hid the near wire at grazing angles. The bias moves only the depth (NDC z, same for x and y, so
   // every line stays exactly where it was measured on screen); in metres it grows with distance, and hills still hide.
-  const SAT_ALPHA = 0.35, sat = [], DEPTH_BIAS = 0.0006;
+  // r5: 0.0006 let 60/3,993 nodes behind a synthetic 180 m ridge show at the crest (1.5 %); 0.0005 draws 2 (0.05 %),
+  // with 2,288/2,301 visible far nodes still drawn (tests/lidar-stream.cjs, ridge check).
+  const SAT_ALPHA = 0.35, sat = [], DEPTH_BIAS = 0.0005;
   const satMode = () => { const m = window.SIM.map; return !!(m.getSource && m.getSource('sat')); };
   const layer = { id: 'lidar-stream-sat', type: 'custom', renderingMode: '3d',
     onAdd(m, gl) { const sh = (ty, src) => { const o = gl.createShader(ty); gl.shaderSource(o, src); gl.compileShader(o); return o; };
