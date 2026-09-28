@@ -23,7 +23,7 @@ const results = []; const check = (name, ok, evidence) => results.push({ name, o
   await p.goto(`${base}?lat=52.2441634&lon=-1.0453368`, { waitUntil: 'load' }); await p.waitForTimeout(9000);
   check('no missing local files (404)', missing.length === 0, missing.join(' | ') || 'none');
   check('window.SIM exists (the app started)', await p.evaluate(() => !!window.SIM), 'window.SIM');
-  const btns = await p.$$eval('#bar button', bs => bs.map(x => x.textContent.trim()));
+  const btns = await p.$$eval('button', bs => bs.map(x => x.textContent.trim())); // controls live in the menu bar now (lane/ui), so look anywhere on the page
   for (const need of ['Satellite', 'Dark', 'Wire', 'Walk', 'Drone', 'Map', 'Pylons']) check(`button ${need}`, btns.some(t => t.startsWith(need)), btns.join(' | '));
   check('map canvas', await p.$('canvas.maplibregl-canvas'), 'maplibre canvas present');
   // 2. Pylons stand on GridAtlas line vertices.
