@@ -79,7 +79,8 @@ const BUILDING = (e, n) => { const u = e % 2048, v = n % 2048; return u >= 1004 
   check('DSM waited the gap after the DTM', ea.length === 2 && ea[1].at - ea[0].at >= 2900, ea.length === 2 ? `${ea[1].at - ea[0].at} ms` : '-');
   check('one 2,048 m box per product', ea.every(x => { const E = x.u.match(/E\((\d+),(\d+)\)/); return E && +E[2] - +E[1] === 2048 && +E[1] % 2048 === 0; }), ea.map(x => (x.u.match(/E\([^)]*\)/) || [''])[0]).join(' '));
   const gr = bl.find(x => x.kind === 'ground'), ab = bl.find(x => x.kind === 'above-ground');
-  check('ground wire: 8 m grid over the tile, measured', gr && gr.n === 2 * 256 * 255 && gr.prov === 'measured', JSON.stringify(gr));
+  const gh = bl.find(x => x.kind === 'ground' && x.style === 'ghost'), gAll = bl.filter(x => x.kind === 'ground').reduce((s, x) => s + x.segs, 0);
+  check('ground wire: 8 m grid over the tile, measured solid (+ any near-lifted ghost)', gr && gAll === 2 * 256 * 255 && gr.prov === 'measured' && gr.style === 'solid' && (!gh || (gh.prov === 'estimated' && gh.n === 4 * gh.segs)), JSON.stringify(gr) + ' ghost ' + (gh ? `${gh.segs} segs, ${gh.lifted} nodes` : 'none'));
   check('above-ground posts: the 40 m block (derived)', ab && ab.prov === 'derived' && ab.n / 5 >= 25 && ab.n / 5 <= 36, JSON.stringify(ab));
   check('anchored near the tile centre (real lat/lon)', gr && Math.abs(gr.lat - 52.25) < 0.03 && Math.abs(gr.lon + 1.05) < 0.03, gr ? `${gr.lat} ${gr.lon}` : '-');
   check('receipt on screen with sha256 and licence', /sha256\(cells\) [0-9a-f]{64}/.test(rc) && /Open Government Licence v3\.0/.test(rc) && /Environment Agency/.test(rc), rc.slice(0, 200));
