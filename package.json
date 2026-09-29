@@ -2,6 +2,18 @@
   "name": "energy-transition-simulator",
   "private": true,
   "type": "commonjs",
-  "scripts": { "test:overlay": "node tests/overlay-smoke.cjs" },
-  "devDependencies": { "playwright": "1.47.2" }
+  "scripts": {
+    "test:overlay": "node tests/overlay-smoke.cjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "playwright": "1.47.2",
+    "@eslint/js": "^9.39.0",
+    "eslint": "^9.39.0",
+    "globals": "^17.0.0",
+    "prettier": "^3.6.0"
+  }
 }
