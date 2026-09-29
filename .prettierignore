@@ -1,0 +1,7 @@
+# Prettier is for new or touched code only: the existing files are not reformatted in bulk.
+node_modules/
+test-output/
+**/*.o15
+**/*.json
+docs/
+*.md

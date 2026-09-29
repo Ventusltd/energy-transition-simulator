@@ -1,0 +1,21 @@
+name: lint
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  eslint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm install --no-audit --no-fund --package-lock=false
+      # Errors fail the job; warnings (unused variables and the like in existing code) are reported only.
+      - run: npm run lint
+      # Formatting is advisory until the existing files have been brought in line, so it never blocks a merge.
+      - name: prettier (advisory)
+        run: npm run format:check
+        continue-on-error: true
